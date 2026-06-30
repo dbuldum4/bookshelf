@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, useEffect } from 'react'
+import { useMemo, useRef, useState, useEffect, useCallback } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import {
   OrbitControls,
@@ -6,6 +6,7 @@ import {
   ContactShadows,
   Float,
 } from '@react-three/drei'
+import { Physics, RigidBody, CuboidCollider } from '@react-three/rapier'
 import * as THREE from 'three'
 
 /* ------------------------------------------------------------------ */
@@ -156,56 +157,56 @@ const BOOK_COLORS = [
   '#7a5a2b', '#2b6a6a',
 ]
 
-function Book({ position, color, height, width, depth, titleColor }) {
-  const spineCanvas = useMemo(() => {
-    const c = document.createElement('canvas')
-    c.width = 128
-    c.height = 256
-    const ctx = c.getContext('2d')
-    // Spine base with vertical gradient
-    const g = ctx.createLinearGradient(0, 0, 128, 0)
-    g.addColorStop(0, shade(color, -0.25))
-    g.addColorStop(0.5, color)
-    g.addColorStop(1, shade(color, -0.25))
-    ctx.fillStyle = g
-    ctx.fillRect(0, 0, 128, 256)
+function makeSpineTexture(color, titleColor) {
+  const c = document.createElement('canvas')
+  c.width = 128
+  c.height = 256
+  const ctx = c.getContext('2d')
+  const g = ctx.createLinearGradient(0, 0, 128, 0)
+  g.addColorStop(0, shade(color, -0.25))
+  g.addColorStop(0.5, color)
+  g.addColorStop(1, shade(color, -0.25))
+  ctx.fillStyle = g
+  ctx.fillRect(0, 0, 128, 256)
 
-    // Top/bottom bands (cap effect)
-    ctx.fillStyle = shade(color, -0.45)
-    ctx.fillRect(0, 0, 128, 10)
-    ctx.fillRect(0, 246, 128, 10)
+  ctx.fillStyle = shade(color, -0.45)
+  ctx.fillRect(0, 0, 128, 10)
+  ctx.fillRect(0, 246, 128, 10)
 
-    // Decorative lines
-    ctx.strokeStyle = shade(color, 0.4)
-    ctx.lineWidth = 1.5
-    ctx.strokeRect(6, 24, 116, 18)
-    ctx.strokeRect(6, 214, 116, 18)
+  ctx.strokeStyle = shade(color, 0.4)
+  ctx.lineWidth = 1.5
+  ctx.strokeRect(6, 24, 116, 18)
+  ctx.strokeRect(6, 214, 116, 18)
 
-    // Title
-    ctx.fillStyle = titleColor || '#f5e6c8'
-    ctx.font = 'bold 16px Georgia, serif'
-    ctx.textAlign = 'center'
-    ctx.save()
-    ctx.translate(64, 128)
-    ctx.rotate(-Math.PI / 2)
-    ctx.fillText('BOOK', 0, 5)
-    ctx.restore()
-    const t = new THREE.CanvasTexture(c)
-    t.colorSpace = THREE.SRGBColorSpace
-    return t
-  }, [color, titleColor])
+  ctx.fillStyle = titleColor || '#f5e6c8'
+  ctx.font = 'bold 16px Georgia, serif'
+  ctx.textAlign = 'center'
+  ctx.save()
+  ctx.translate(64, 128)
+  ctx.rotate(-Math.PI / 2)
+  ctx.fillText('BOOK', 0, 5)
+  ctx.restore()
+  const t = new THREE.CanvasTexture(c)
+  t.colorSpace = THREE.SRGBColorSpace
+  return t
+}
+
+function Book({ position, color, height, width, depth, titleColor, tilt }) {
+  const spineTexture = useMemo(
+    () => makeSpineTexture(color, titleColor),
+    [color, titleColor]
+  )
 
   return (
-    <group position={position}>
+    <group position={position} rotation={[0, 0, tilt || 0]}>
       <mesh castShadow receiveShadow>
         <boxGeometry args={[width, height, depth]} />
         <meshStandardMaterial
-          map={spineCanvas}
+          map={spineTexture}
           roughness={0.55}
           metalness={0.05}
         />
       </mesh>
-      {/* Pages edge (fore-edge) highlight */}
       <mesh position={[0, 0, depth / 2 + 0.001]}>
         <planeGeometry args={[width * 0.96, height * 0.96]} />
         <meshStandardMaterial color="#f0ead6" roughness={0.85} />
@@ -222,9 +223,142 @@ function shade(hex, amt) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Physics-enabled book (grab & fling)                                 */
+/* ------------------------------------------------------------------ */
+const dragPlane = new THREE.Plane()
+const raycaster = new THREE.Raycaster()
+const dragPoint = new THREE.Vector3()
+const cameraDir = new THREE.Vector3()
+
+function PhysicsBook({ book, mode }) {
+  const bodyRef = useRef()
+  const dragging = useRef(false)
+  const lastPos = useRef(new THREE.Vector3())
+  const velocity = useRef(new THREE.Vector3())
+  const lastTime = useRef(0)
+  const { camera, gl } = useThree()
+
+  const spineTexture = useMemo(
+    () => makeSpineTexture(book.color, book.titleColor),
+    [book.color, book.titleColor]
+  )
+
+  const onPointerDown = useCallback(
+    (e) => {
+      if (mode !== 'play') return
+      e.stopPropagation()
+      const body = bodyRef.current
+      if (!body) return
+      dragging.current = true
+      // Set kinematic while dragging so we control position
+      body.setBodyType(2, true) // 2 = KinematicPositionBased
+      // Build a drag plane facing the camera through the book center
+      const p = body.translation()
+      camera.getWorldDirection(cameraDir)
+      dragPlane.setFromNormalAndCoplanarPoint(cameraDir.negate(), new THREE.Vector3(p.x, p.y, p.z))
+      // Project pointer onto plane to get offset
+      raycaster.setFromCamera(e.pointer, camera)
+      raycaster.ray.intersectPlane(dragPlane, dragPoint)
+      lastPos.current.copy(dragPoint)
+      velocity.current.set(0, 0, 0)
+      lastTime.current = performance.now()
+      gl.domElement.style.cursor = 'grabbing'
+    },
+    [mode, camera, gl]
+  )
+
+  useEffect(() => {
+    const onMove = (e) => {
+      if (!dragging.current) return
+      const body = bodyRef.current
+      if (!body) return
+      raycaster.setFromCamera(
+        new THREE.Vector2(
+          (e.clientX / window.innerWidth) * 2 - 1,
+          -(e.clientY / window.innerHeight) * 2 + 1
+        ),
+        camera
+      )
+      raycaster.ray.intersectPlane(dragPlane, dragPoint)
+      const now = performance.now()
+      const dt = Math.max(0.001, (now - lastTime.current) / 1000)
+      velocity.current.copy(dragPoint).sub(lastPos.current).divideScalar(dt)
+      lastPos.current.copy(dragPoint)
+      lastTime.current = now
+      body.setNextKinematicTranslation({ x: dragPoint.x, y: dragPoint.y, z: dragPoint.z })
+    }
+    const onUp = () => {
+      if (!dragging.current) return
+      dragging.current = false
+      const body = bodyRef.current
+      if (!body) return
+      body.setBodyType(0, true) // 0 = Dynamic
+      // Apply fling velocity (clamped)
+      const v = velocity.current
+      const max = 18
+      const speed = v.length()
+      if (speed > max) v.multiplyScalar(max / speed)
+      body.setLinvel({ x: v.x, y: v.y, z: v.z }, true)
+      body.setAngvel({ x: (Math.random() - 0.5) * 4, y: (Math.random() - 0.5) * 4, z: (Math.random() - 0.5) * 4 }, true)
+      gl.domElement.style.cursor = 'auto'
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    return () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+  }, [camera, gl])
+
+  return (
+    <RigidBody
+      ref={bodyRef}
+      type="dynamic"
+      position={[book.position[0], book.position[1] + 0.3, book.position[2]]}
+      colliders="cuboid"
+      mass={0.4}
+      restitution={0.35}
+      friction={0.6}
+      linearDamping={0.3}
+      angularDamping={0.4}
+      enabled={mode === 'play'}
+    >
+      <group
+        onPointerDown={onPointerDown}
+        onPointerOver={(e) => {
+          if (mode === 'play') {
+            e.stopPropagation()
+            gl.domElement.style.cursor = 'grab'
+          }
+        }}
+        onPointerOut={() => {
+          if (mode === 'play' && !dragging.current) {
+            gl.domElement.style.cursor = 'auto'
+          }
+        }}
+        rotation={[0, 0, book.tilt || 0]}
+      >
+          <mesh castShadow receiveShadow>
+            <boxGeometry args={[book.width, book.height, book.depth]} />
+            <meshStandardMaterial
+              map={spineTexture}
+              roughness={0.55}
+              metalness={0.05}
+            />
+          </mesh>
+        <mesh position={[0, 0, book.depth / 2 + 0.001]}>
+          <planeGeometry args={[book.width * 0.96, book.height * 0.96]} />
+          <meshStandardMaterial color="#f0ead6" roughness={0.85} />
+        </mesh>
+      </group>
+    </RigidBody>
+  )
+}
+
+/* ------------------------------------------------------------------ */
 /* Shelf (horizontal plank with books)                                 */
 /* ------------------------------------------------------------------ */
-function Shelf({ y, woodTex }) {
+function Shelf({ y, woodTex, mode }) {
   const books = useMemo(() => {
     const items = []
     let x = -3.4
@@ -251,7 +385,7 @@ function Shelf({ y, woodTex }) {
 
   return (
     <group position={[0, y, 0]}>
-      {/* Plank */}
+      {/* Plank mesh */}
       <mesh position={[0, -0.12, 0]} castShadow receiveShadow>
         <boxGeometry args={[7.6, 0.24, 1.4]} />
         <meshStandardMaterial
@@ -265,16 +399,29 @@ function Shelf({ y, woodTex }) {
         <planeGeometry args={[7.6, 0.05]} />
         <meshBasicMaterial color="#000000" transparent opacity={0.35} />
       </mesh>
-      {books.map((b) => (
-        <group key={b.key} position={b.position} rotation={[0, 0, b.tilt]}>
+      {/* Plank collider (physics only) */}
+      {mode === 'play' && (
+        <CuboidCollider
+          position={[0, -0.12, 0]}
+          args={[3.8, 0.12, 0.7]}
+        />
+      )}
+      {/* Books */}
+      {books.map((b) =>
+        mode === 'play' ? (
+          <PhysicsBook key={b.key} book={b} mode={mode} />
+        ) : (
           <Book
+            key={b.key}
+            position={b.position}
             color={b.color}
             height={b.height}
             width={b.width}
             depth={b.depth}
+            tilt={b.tilt}
           />
-        </group>
-      ))}
+        )
+      )}
     </group>
   )
 }
@@ -282,7 +429,7 @@ function Shelf({ y, woodTex }) {
 /* ------------------------------------------------------------------ */
 /* Bookshelf frame (sides + back)                                      */
 /* ------------------------------------------------------------------ */
-function Bookshelf() {
+function Bookshelf({ mode }) {
   const woodTex = useWoodTexture()
   const woodTex2 = useWoodTexture()
 
@@ -314,10 +461,23 @@ function Bookshelf() {
         <meshStandardMaterial map={woodTex} roughness={0.45} />
       </mesh>
       {/* Shelves with books */}
-      <Shelf y={-1.6} woodTex={woodTex} />
-      <Shelf y={0.4} woodTex={woodTex} />
-      <Shelf y={2.4} woodTex={woodTex} />
-      <Shelf y={4.4} woodTex={woodTex} />
+      <Shelf y={-1.6} woodTex={woodTex} mode={mode} />
+      <Shelf y={0.4} woodTex={woodTex} mode={mode} />
+      <Shelf y={2.4} woodTex={woodTex} mode={mode} />
+      <Shelf y={4.4} woodTex={woodTex} mode={mode} />
+
+      {/* Physics colliders for frame + floor */}
+      {mode === 'play' && (
+        <>
+          <CuboidCollider position={[0, 2, -0.75]} args={[3.8, 3.8, 0.08]} />
+          <CuboidCollider position={[-3.85, 2, 0]} args={[0.15, 3.8, 0.75]} />
+          <CuboidCollider position={[3.85, 2, 0]} args={[0.15, 3.8, 0.75]} />
+          <CuboidCollider position={[0, 5.85, 0]} args={[4.05, 0.15, 0.8]} />
+          <CuboidCollider position={[0, -1.85, 0]} args={[4.05, 0.15, 0.8]} />
+          {/* Floor to catch fallen books */}
+          <CuboidCollider position={[0, -5.5, 0]} args={[30, 0.5, 30]} />
+        </>
+      )}
     </group>
   )
 }
@@ -346,7 +506,7 @@ function CameraRig({ mode }) {
         controls.target.lerp(FIXED_TARGET, Math.min(1, delta * 3))
         controls.update()
       }
-    } else if (mode === 'fixed') {
+    } else if (mode === 'fixed' || mode === 'play') {
       // Hold a static framing with a gentle handheld "shake"
       shakeRef.current += delta
       const t = shakeRef.current
@@ -404,9 +564,15 @@ function Scene({ mode }) {
 
       <Galaxy />
 
-      <Float speed={1.2} rotationIntensity={0.05} floatIntensity={0.15}>
-        <Bookshelf />
-      </Float>
+      {mode === 'play' ? (
+        <Physics gravity={[0, -9.81, 0]} timeStep="vary">
+          <Bookshelf mode={mode} />
+        </Physics>
+      ) : (
+        <Float speed={1.2} rotationIntensity={0.05} floatIntensity={0.15}>
+          <Bookshelf mode={mode} />
+        </Float>
+      )}
 
       <ContactShadows
         position={[0, -3.45, 0]}
@@ -465,10 +631,16 @@ export default function App() {
             '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
         }}
       >
-        {['fixed', 'rotate', 'custom'].map((m) => {
+        {['fixed', 'rotate', 'custom', 'play'].map((m) => {
           const active = mode === m
           const label =
-            m === 'fixed' ? 'Fixed View' : m === 'rotate' ? 'Rotate' : 'Customize'
+            m === 'fixed'
+              ? 'Fixed View'
+              : m === 'rotate'
+              ? 'Rotate'
+              : m === 'custom'
+              ? 'Customize'
+              : 'Play'
           return (
             <button
               key={m}
@@ -493,6 +665,32 @@ export default function App() {
           )
         })}
       </div>
+
+      {/* Play mode hint */}
+      {mode === 'play' && (
+        <div
+          style={{
+            position: 'absolute',
+            bottom: 24,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            color: 'rgba(255,255,255,0.7)',
+            fontFamily:
+              '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+            fontSize: 13,
+            fontWeight: 500,
+            background: 'rgba(20, 18, 35, 0.55)',
+            backdropFilter: 'blur(20px) saturate(140%)',
+            WebkitBackdropFilter: 'blur(20px) saturate(140%)',
+            border: '1px solid rgba(255,255,255,0.12)',
+            borderRadius: 10,
+            padding: '8px 18px',
+            pointerEvents: 'none',
+          }}
+        >
+          Drag a book to grab it — release to fling
+        </div>
+      )}
     </div>
   )
 }
