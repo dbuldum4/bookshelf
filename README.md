@@ -1,16 +1,44 @@
-# React + Vite
+# Bookshelf
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+A skeuomorphic, Apple-style 3D bookshelf floating in a galaxy, built with React, Three.js, and Rapier physics.
 
-Currently, two official plugins are available:
+## Features
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- **Procedural everything** — wood grain, book spines, titles, and galaxy particles are all generated on canvas at runtime. No image assets.
+- **Skeuomorphic bookshelf** — four shelves of books with randomized dimensions, colors, tilt, and procedurally drawn spines (gradient body, cap bands, decorative lines, title).
+- **Galaxy background** — 6,000-point spiral galaxy with additive blending, slow rotation, and orange-to-blue color gradient.
+- **Four camera modes:**
+  - **Fixed View** — static framing with gentle handheld camera shake
+  - **Rotate** — slow auto-orbit around the bookshelf
+  - **Customize** — free orbit / zoom via OrbitControls
+  - **Play** — physics-enabled mode where you can grab books and fling them around
+- **Play mode physics** — powered by Rapier:
+  - Drag any book to grab it — it follows your cursor in real time
+  - Release to fling — velocity from your drag is applied as linear + angular velocity
+  - Books collide with each other, the shelf frame, and a floor
+- **Apple-style UI** — frosted-glass segmented control with SF Pro font stack, backdrop blur, and subtle shadows.
 
-## React Compiler
+## Tech Stack
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- [React](https://react.dev) + [Vite](https://vite.dev)
+- [Three.js](https://threejs.org)
+- [@react-three/fiber](https://github.com/pmndrs/react-three-fiber) — React renderer for Three.js
+- [@react-three/drei](https://github.com/pmndrs/drei) — helpers (OrbitControls, Environment, ContactShadows, Float)
+- [@react-three/rapier](https://github.com/pmndrs/react-three-rapier) — Rapier physics bindings
 
-## Expanding the Oxlint configuration
+## Getting Started
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+```bash
+npm install
+npm run dev
+```
+
+Open `http://localhost:5173`.
+
+## Build
+
+```bash
+npm run build
+```
+
+Output is in `dist/`.

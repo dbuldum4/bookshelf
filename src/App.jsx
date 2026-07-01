@@ -91,6 +91,258 @@ function Galaxy() {
 }
 
 /* ------------------------------------------------------------------ */
+/* Realistic galaxy (soft sprites, core glow, nebula tints)            */
+/* ------------------------------------------------------------------ */
+function makeStarTexture() {
+  const size = 64
+  const canvas = document.createElement('canvas')
+  canvas.width = size
+  canvas.height = size
+  const ctx = canvas.getContext('2d')
+  const grad = ctx.createRadialGradient(
+    size / 2, size / 2, 0,
+    size / 2, size / 2, size / 2
+  )
+  grad.addColorStop(0, 'rgba(255,255,255,1)')
+  grad.addColorStop(0.15, 'rgba(255,255,255,0.7)')
+  grad.addColorStop(0.4, 'rgba(255,255,255,0.15)')
+  grad.addColorStop(1, 'rgba(255,255,255,0)')
+  ctx.fillStyle = grad
+  ctx.fillRect(0, 0, size, size)
+  const tex = new THREE.CanvasTexture(canvas)
+  tex.colorSpace = THREE.SRGBColorSpace
+  return tex
+}
+
+function makeGlowTexture() {
+  const size = 256
+  const canvas = document.createElement('canvas')
+  canvas.width = size
+  canvas.height = size
+  const ctx = canvas.getContext('2d')
+  const grad = ctx.createRadialGradient(
+    size / 2, size / 2, 0,
+    size / 2, size / 2, size / 2
+  )
+  grad.addColorStop(0, 'rgba(255,245,220,0.9)')
+  grad.addColorStop(0.08, 'rgba(255,230,180,0.5)')
+  grad.addColorStop(0.25, 'rgba(200,180,255,0.12)')
+  grad.addColorStop(0.6, 'rgba(120,100,200,0.03)')
+  grad.addColorStop(1, 'rgba(0,0,0,0)')
+  ctx.fillStyle = grad
+  ctx.fillRect(0, 0, size, size)
+  const tex = new THREE.CanvasTexture(canvas)
+  tex.colorSpace = THREE.SRGBColorSpace
+  return tex
+}
+
+function RealisticGalaxy() {
+  const starTex = useMemo(() => makeStarTexture(), [])
+  const glowTex = useMemo(() => makeGlowTexture(), [])
+  const coreRef = useRef()
+  const armsRef = useRef()
+  const haloRef = useRef()
+
+  const { core, arms, halo } = useMemo(() => {
+    const radius = 60
+
+    // ---- Core (dense bright bulge) ----
+    const coreCount = 3000
+    const corePos = new Float32Array(coreCount * 3)
+    const coreCol = new Float32Array(coreCount * 3)
+    const coreWhite = new THREE.Color('#fff8e8')
+    const coreGold = new THREE.Color('#ffdc9a')
+    for (let i = 0; i < coreCount; i++) {
+      const i3 = i * 3
+      const r = Math.pow(Math.random(), 2.5) * 8
+      const theta = Math.random() * Math.PI * 2
+      const phi = Math.acos(2 * Math.random() - 1)
+      corePos[i3] = r * Math.sin(phi) * Math.cos(theta)
+      corePos[i3 + 1] = r * Math.cos(phi) * 0.4
+      corePos[i3 + 2] = r * Math.sin(phi) * Math.sin(theta)
+      const c = coreWhite.clone().lerp(coreGold, r / 8)
+      coreCol[i3] = c.r
+      coreCol[i3 + 1] = c.g
+      coreCol[i3 + 2] = c.b
+    }
+
+    // ---- Spiral arms ----
+    const armCount = 14000
+    const armPos = new Float32Array(armCount * 3)
+    const armCol = new Float32Array(armCount * 3)
+    const branches = 2
+    const spin = 0.5
+    const randomnessPower = 2.8
+    const innerWhite = new THREE.Color('#ffffff')
+    const midBlue = new THREE.Color('#8fb8ff')
+    const outerBlue = new THREE.Color('#3d5cff')
+    const nebulaPink = new THREE.Color('#ff6b9d')
+    for (let i = 0; i < armCount; i++) {
+      const i3 = i * 3
+      const r = Math.pow(Math.random(), 0.8) * radius
+      const branchAngle = ((i % branches) / branches) * Math.PI * 2
+      const spinAngle = r * spin * 0.12
+
+      const rx =
+        Math.pow(Math.random(), randomnessPower) *
+        (Math.random() < 0.5 ? 1 : -1) *
+        0.5 *
+        r
+      const ry =
+        Math.pow(Math.random(), randomnessPower) *
+        (Math.random() < 0.5 ? 1 : -1) *
+        0.08 *
+        r
+      const rz =
+        Math.pow(Math.random(), randomnessPower) *
+        (Math.random() < 0.5 ? 1 : -1) *
+        0.5 *
+        r
+
+      armPos[i3] = Math.cos(branchAngle + spinAngle) * r + rx
+      armPos[i3 + 1] = ry
+      armPos[i3 + 2] = Math.sin(branchAngle + spinAngle) * r + rz
+
+      let c
+      if (r < 12) {
+        c = innerWhite.clone().lerp(midBlue, r / 12 * 0.5)
+      } else if (r < 40) {
+        c = midBlue.clone().lerp(outerBlue, (r - 12) / 28)
+      } else {
+        c = outerBlue.clone()
+      }
+      // Sprinkle nebula pinks
+      if (Math.random() < 0.04 && r > 10 && r < 45) {
+        c.lerp(nebulaPink, 0.5 + Math.random() * 0.4)
+      }
+      armCol[i3] = c.r
+      armCol[i3 + 1] = c.g
+      armCol[i3 + 2] = c.b
+    }
+
+    // ---- Halo (diffuse outer stars) ----
+    const haloCount = 4000
+    const haloPos = new Float32Array(haloCount * 3)
+    const haloCol = new Float32Array(haloCount * 3)
+    const haloBlue = new THREE.Color('#4a6aff')
+    const haloFaint = new THREE.Color('#2a2a55')
+    for (let i = 0; i < haloCount; i++) {
+      const i3 = i * 3
+      const r = 30 + Math.pow(Math.random(), 0.5) * 50
+      const theta = Math.random() * Math.PI * 2
+      const phi = Math.acos(2 * Math.random() - 1)
+      haloPos[i3] = r * Math.sin(phi) * Math.cos(theta)
+      haloPos[i3 + 1] = r * Math.cos(phi) * 0.3
+      haloPos[i3 + 2] = r * Math.sin(phi) * Math.sin(theta)
+      const c = haloBlue.clone().lerp(haloFaint, Math.random())
+      haloCol[i3] = c.r
+      haloCol[i3 + 1] = c.g
+      haloCol[i3 + 2] = c.b
+    }
+
+    return {
+      core: { pos: corePos, col: coreCol, count: coreCount },
+      arms: { pos: armPos, col: armCol, count: armCount },
+      halo: { pos: haloPos, col: haloCol, count: haloCount },
+    }
+  }, [])
+
+  useFrame((_, delta) => {
+    if (coreRef.current) coreRef.current.rotation.y += delta * 0.015
+    if (armsRef.current) armsRef.current.rotation.y += delta * 0.015
+    if (haloRef.current) haloRef.current.rotation.y += delta * 0.008
+  })
+
+  return (
+    <group>
+      {/* Central glow billboard */}
+      <sprite scale={[22, 22, 1]}>
+        <spriteMaterial
+          map={glowTex}
+          transparent
+          opacity={0.7}
+          depthWrite={false}
+          blending={THREE.AdditiveBlending}
+        />
+      </sprite>
+
+      {/* Core stars */}
+      <points ref={coreRef}>
+        <bufferGeometry>
+          <bufferAttribute
+            attach="attributes-position"
+            args={[core.pos, 3]}
+          />
+          <bufferAttribute
+            attach="attributes-color"
+            args={[core.col, 3]}
+          />
+        </bufferGeometry>
+        <pointsMaterial
+          size={0.45}
+          sizeAttenuation
+          map={starTex}
+          transparent
+          alphaTest={0.01}
+          depthWrite={false}
+          blending={THREE.AdditiveBlending}
+          vertexColors
+        />
+      </points>
+
+      {/* Spiral arms */}
+      <points ref={armsRef}>
+        <bufferGeometry>
+          <bufferAttribute
+            attach="attributes-position"
+            args={[arms.pos, 3]}
+          />
+          <bufferAttribute
+            attach="attributes-color"
+            args={[arms.col, 3]}
+          />
+        </bufferGeometry>
+        <pointsMaterial
+          size={0.6}
+          sizeAttenuation
+          map={starTex}
+          transparent
+          alphaTest={0.01}
+          depthWrite={false}
+          blending={THREE.AdditiveBlending}
+          vertexColors
+        />
+      </points>
+
+      {/* Halo */}
+      <points ref={haloRef}>
+        <bufferGeometry>
+          <bufferAttribute
+            attach="attributes-position"
+            args={[halo.pos, 3]}
+          />
+          <bufferAttribute
+            attach="attributes-color"
+            args={[halo.col, 3]}
+          />
+        </bufferGeometry>
+        <pointsMaterial
+          size={0.35}
+          sizeAttenuation
+          map={starTex}
+          transparent
+          opacity={0.4}
+          alphaTest={0.01}
+          depthWrite={false}
+          blending={THREE.AdditiveBlending}
+          vertexColors
+        />
+      </points>
+    </group>
+  )
+}
+
+/* ------------------------------------------------------------------ */
 /* Procedural wood texture                                            */
 /* ------------------------------------------------------------------ */
 function useWoodTexture() {
@@ -542,7 +794,7 @@ function CameraRig({ mode }) {
   return null
 }
 
-function Scene({ mode }) {
+function Scene({ mode, resetKey, galaxyMode }) {
   return (
     <>
       <color attach="background" args={['#05010f']} />
@@ -562,10 +814,10 @@ function Scene({ mode }) {
       <pointLight position={[-6, 4, 6]} intensity={0.6} color="#9bb8ff" />
       <pointLight position={[0, 8, -4]} intensity={0.4} color="#ffb86b" />
 
-      <Galaxy />
+      {galaxyMode === 'pixelated' ? <Galaxy /> : <RealisticGalaxy />}
 
       {mode === 'play' ? (
-        <Physics gravity={[0, -9.81, 0]} timeStep="vary">
+        <Physics key={resetKey} gravity={[0, -9.81, 0]} timeStep="vary">
           <Bookshelf mode={mode} />
         </Physics>
       ) : (
@@ -600,6 +852,8 @@ function Scene({ mode }) {
 
 export default function App() {
   const [mode, setMode] = useState('fixed')
+  const [resetKey, setResetKey] = useState(0)
+  const [galaxyMode, setGalaxyMode] = useState('realistic')
 
   return (
     <div style={{ width: '100vw', height: '100vh', background: '#05010f' }}>
@@ -609,7 +863,7 @@ export default function App() {
         dpr={[1, 2]}
         gl={{ antialias: true }}
       >
-        <Scene mode={mode} />
+        <Scene mode={mode} resetKey={resetKey} galaxyMode={galaxyMode} />
       </Canvas>
 
       {/* Toggle in top-left */}
@@ -666,7 +920,54 @@ export default function App() {
         })}
       </div>
 
-      {/* Play mode hint */}
+      {/* Galaxy toggle in top-right */}
+      <div
+        style={{
+          position: 'absolute',
+          top: 16,
+          right: 16,
+          display: 'flex',
+          gap: 0,
+          padding: 4,
+          background: 'rgba(20, 18, 35, 0.55)',
+          backdropFilter: 'blur(20px) saturate(140%)',
+          WebkitBackdropFilter: 'blur(20px) saturate(140%)',
+          border: '1px solid rgba(255,255,255,0.12)',
+          borderRadius: 12,
+          boxShadow: '0 8px 30px rgba(0,0,0,0.45)',
+          fontFamily:
+            '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+        }}
+      >
+        {['pixelated', 'realistic'].map((g) => {
+          const active = galaxyMode === g
+          const label = g === 'pixelated' ? 'Pixelated' : 'Realistic'
+          return (
+            <button
+              key={g}
+              onClick={() => setGalaxyMode(g)}
+              style={{
+                border: 'none',
+                cursor: 'pointer',
+                padding: '8px 16px',
+                fontSize: 13,
+                fontWeight: 600,
+                letterSpacing: 0.2,
+                color: active ? '#fff' : 'rgba(255,255,255,0.6)',
+                background: active
+                  ? 'rgba(255,255,255,0.16)'
+                  : 'transparent',
+                borderRadius: 8,
+                transition: 'all 0.2s ease',
+              }}
+            >
+              {label}
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Play mode hint + reset */}
       {mode === 'play' && (
         <div
           style={{
@@ -674,21 +975,46 @@ export default function App() {
             bottom: 24,
             left: '50%',
             transform: 'translateX(-50%)',
-            color: 'rgba(255,255,255,0.7)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
             fontFamily:
               '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
-            fontSize: 13,
-            fontWeight: 500,
-            background: 'rgba(20, 18, 35, 0.55)',
-            backdropFilter: 'blur(20px) saturate(140%)',
-            WebkitBackdropFilter: 'blur(20px) saturate(140%)',
-            border: '1px solid rgba(255,255,255,0.12)',
-            borderRadius: 10,
-            padding: '8px 18px',
-            pointerEvents: 'none',
           }}
         >
-          Drag a book to grab it — release to fling
+          <div
+            style={{
+              color: 'rgba(255,255,255,0.7)',
+              fontSize: 13,
+              fontWeight: 500,
+              background: 'rgba(20, 18, 35, 0.55)',
+              backdropFilter: 'blur(20px) saturate(140%)',
+              WebkitBackdropFilter: 'blur(20px) saturate(140%)',
+              border: '1px solid rgba(255,255,255,0.12)',
+              borderRadius: 10,
+              padding: '8px 18px',
+            }}
+          >
+            Drag a book to grab it — release to fling
+          </div>
+          <button
+            onClick={() => setResetKey((k) => k + 1)}
+            style={{
+              border: '1px solid rgba(255,255,255,0.12)',
+              cursor: 'pointer',
+              color: 'rgba(255,255,255,0.85)',
+              fontSize: 13,
+              fontWeight: 600,
+              background: 'rgba(20, 18, 35, 0.55)',
+              backdropFilter: 'blur(20px) saturate(140%)',
+              WebkitBackdropFilter: 'blur(20px) saturate(140%)',
+              borderRadius: 10,
+              padding: '8px 16px',
+              transition: 'all 0.2s ease',
+            }}
+          >
+            Reset
+          </button>
         </div>
       )}
     </div>
