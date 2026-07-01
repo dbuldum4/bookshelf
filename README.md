@@ -29,8 +29,8 @@ A skeuomorphic, Apple-style 3D bookshelf floating in a galaxy, built with React,
 ## Getting Started
 
 ```bash
-npm install
-npm run dev
+bun install
+bun run dev
 ```
 
 Open `http://localhost:5173`.
@@ -38,7 +38,7 @@ Open `http://localhost:5173`.
 ## Build
 
 ```bash
-npm run build
+bun run build
 ```
 
 Output is in `dist/`.
