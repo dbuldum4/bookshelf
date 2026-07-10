@@ -59,8 +59,15 @@ bun run lint     # Run oxlint
 
 ```text
 src/
-  App.jsx       # Scene, generated textures, bookshelf, controls, and physics
-  main.jsx      # React entrypoint and global page styles
+  App.jsx                 # Application state and full-window canvas shell
+  components/
+    Controls.jsx          # Camera, galaxy, and play-mode controls
+  scene/
+    Bookshelf.jsx         # Procedural books, wood, and physics interactions
+    CameraRig.jsx         # Fixed, rotating, and custom camera behavior
+    Galaxy.jsx            # Galaxy particles, sprites, and nebula textures
+    Scene.jsx             # Lighting, environment, and scene composition
+  main.jsx                # React entrypoint and global page styles
 public/
   favicon.svg
 ```
