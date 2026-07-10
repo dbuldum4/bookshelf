@@ -1,44 +1,72 @@
 # Bookshelf
 
-A skeuomorphic, Apple-style 3D bookshelf floating in a galaxy, built with React, Three.js, and Rapier physics.
+A procedural 3D bookshelf scene built with React, Vite, Three.js, and Rapier physics. The app renders a wood-grain bookshelf suspended in space, with generated book spines, switchable galaxy backdrops, camera modes, and an interactive physics play mode.
 
 ## Features
 
-- **Procedural everything** — wood grain, book spines, titles, and galaxy particles are all generated on canvas at runtime. No image assets.
-- **Skeuomorphic bookshelf** — four shelves of books with randomized dimensions, colors, tilt, and procedurally drawn spines (gradient body, cap bands, decorative lines, title).
-- **Galaxy background** — 6,000-point spiral galaxy with additive blending, slow rotation, and orange-to-blue color gradient.
-- **Four camera modes:**
-  - **Fixed View** — static framing with gentle handheld camera shake
-  - **Rotate** — slow auto-orbit around the bookshelf
-  - **Customize** — free orbit / zoom via OrbitControls
-  - **Play** — physics-enabled mode where you can grab books and fling them around
-- **Play mode physics** — powered by Rapier:
-  - Drag any book to grab it — it follows your cursor in real time
-  - Release to fling — velocity from your drag is applied as linear + angular velocity
-  - Books collide with each other, the shelf frame, and a floor
-- **Apple-style UI** — frosted-glass segmented control with SF Pro font stack, backdrop blur, and subtle shadows.
+- Procedural bookshelf with generated wood grain, randomized books, textured spines, shelf shadows, and a floating display mode.
+- Two galaxy backdrops:
+  - Realistic: soft sprite stars, bright core glow, spiral arms, halo stars, and nebula color variation.
+  - Pixelated: a simpler additive spiral galaxy made from point particles.
+- Four camera modes:
+  - Fixed View: composed static framing with subtle handheld motion.
+  - Rotate: automatic orbit around the bookshelf.
+  - Customize: OrbitControls-powered camera orbit and zoom.
+  - Play: physics mode where books become draggable rigid bodies.
+- Play mode interactions:
+  - Drag a book to grab it.
+  - Release to fling it with drag-derived velocity.
+  - Use Reset to rebuild the physics scene.
+  - Books collide with shelves, side panels, the back panel, top and bottom boards, and a hidden floor.
+- Apple-style glass controls with segmented view selectors.
 
 ## Tech Stack
 
-- [React](https://react.dev) + [Vite](https://vite.dev)
+- [React](https://react.dev)
+- [Vite](https://vite.dev)
 - [Three.js](https://threejs.org)
-- [@react-three/fiber](https://github.com/pmndrs/react-three-fiber) — React renderer for Three.js
-- [@react-three/drei](https://github.com/pmndrs/drei) — helpers (OrbitControls, Environment, ContactShadows, Float)
-- [@react-three/rapier](https://github.com/pmndrs/react-three-rapier) — Rapier physics bindings
+- [@react-three/fiber](https://github.com/pmndrs/react-three-fiber)
+- [@react-three/drei](https://github.com/pmndrs/drei)
+- [@react-three/rapier](https://github.com/pmndrs/react-three-rapier)
+- [Bun](https://bun.sh)
 
 ## Getting Started
 
+Install dependencies:
+
 ```bash
 bun install
+```
+
+Start the development server:
+
+```bash
 bun run dev
 ```
 
 Open `http://localhost:5173`.
 
-## Build
+## Scripts
 
 ```bash
-bun run build
+bun run dev      # Start Vite in development mode
+bun run build    # Create a production build in dist/
+bun run preview  # Preview the production build locally
+bun run lint     # Run oxlint
 ```
 
-Output is in `dist/`.
+## Project Structure
+
+```text
+src/
+  App.jsx       # Scene, generated textures, bookshelf, controls, and physics
+  main.jsx      # React entrypoint and global page styles
+public/
+  favicon.svg
+```
+
+## Notes
+
+- The visual assets are generated at runtime with canvas textures and Three.js geometry.
+- Physics is only enabled in Play mode; the default viewing modes keep the bookshelf in a lightweight floating scene.
+- The app is designed for a full-window canvas experience.
