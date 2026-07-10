@@ -8,7 +8,14 @@ const GALAXY_BACKDROP_POSITION = [-7, 5.4, -24]
 const GALAXY_BACKDROP_ROTATION = [Math.PI * 0.42, 0.22, -0.28]
 const GALAXY_BACKDROP_SCALE = [0.46, 0.46, 0.46]
 
-function Scene({ mode, resetKey, galaxyMode }) {
+function Scene({
+  mode,
+  resetKey,
+  galaxyMode,
+  library,
+  selectedBookId,
+  onSelectBook,
+}) {
   const pixelatedGalaxy = galaxyMode === 'pixelated'
 
   return (
@@ -67,11 +74,16 @@ function Scene({ mode, resetKey, galaxyMode }) {
 
       {mode === 'play' ? (
         <Physics key={resetKey} gravity={[0, -9.81, 0]} timeStep="vary">
-          <Bookshelf mode={mode} />
+          <Bookshelf mode={mode} library={library} />
         </Physics>
       ) : (
         <Float speed={1.2} rotationIntensity={0.05} floatIntensity={0.15}>
-          <Bookshelf mode={mode} />
+          <Bookshelf
+            mode={mode}
+            library={library}
+            selectedBookId={selectedBookId}
+            onSelectBook={onSelectBook}
+          />
         </Float>
       )}
 
@@ -100,4 +112,3 @@ function Scene({ mode, resetKey, galaxyMode }) {
 }
 
 export default Scene
-

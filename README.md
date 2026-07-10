@@ -5,6 +5,9 @@ A procedural 3D bookshelf scene built with React, Vite, Three.js, and Rapier phy
 ## Features
 
 - Procedural bookshelf with generated wood grain, randomized books, textured spines, shelf shadows, and a floating display mode.
+- A curated 40-book library with real titles and authors rendered on each spine.
+- Selectable books that pull forward and open an editable detail card.
+- Reading status and personal notes saved locally in the browser.
 - Two galaxy backdrops:
   - Realistic: soft sprite stars, bright core glow, spiral arms, halo stars, and nebula color variation.
   - Pixelated: a simpler additive spiral galaxy made from point particles.
@@ -62,6 +65,8 @@ src/
   App.jsx                 # Application state and full-window canvas shell
   components/
     Controls.jsx          # Camera, galaxy, and play-mode controls
+    BookDetails.jsx       # Selected-book metadata, status, and notes
+  library.js              # Book catalog, shelf layout, and local persistence
   scene/
     Bookshelf.jsx         # Procedural books, wood, and physics interactions
     CameraRig.jsx         # Fixed, rotating, and custom camera behavior

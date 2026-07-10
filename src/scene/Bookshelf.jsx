@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react'
-import { useThree } from '@react-three/fiber'
+import { useFrame, useThree } from '@react-three/fiber'
 import { CuboidCollider, RigidBody } from '@react-three/rapier'
 import * as THREE from 'three'
+import { buildShelfBooks } from '../library'
 
 function useWoodTexture() {
   return useMemo(() => {
@@ -61,13 +62,7 @@ function useWoodTexture() {
 /* ------------------------------------------------------------------ */
 /* A single book                                                       */
 /* ------------------------------------------------------------------ */
-const BOOK_COLORS = [
-  '#b3303a', '#2d5a8a', '#2e7d52', '#c98a2b', '#6a3d8a',
-  '#8a2b3c', '#1f4d6b', '#5a7a2b', '#a83a2b', '#3a4a8a',
-  '#7a5a2b', '#2b6a6a',
-]
-
-function makeSpineTexture(color, titleColor) {
+function makeSpineTexture({ color, title, author, titleColor }) {
   const c = document.createElement('canvas')
   c.width = 128
   c.height = 256
@@ -89,37 +84,78 @@ function makeSpineTexture(color, titleColor) {
   ctx.strokeRect(6, 214, 116, 18)
 
   ctx.fillStyle = titleColor || '#f5e6c8'
-  ctx.font = 'bold 16px Georgia, serif'
   ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
   ctx.save()
   ctx.translate(64, 128)
   ctx.rotate(-Math.PI / 2)
-  ctx.fillText('BOOK', 0, 5)
+  ctx.font = `bold ${title.length > 22 ? 12 : 15}px Georgia, serif`
+  ctx.fillText(title.toUpperCase(), 0, -3, 190)
+  ctx.globalAlpha = 0.72
+  ctx.font = '8px Arial, sans-serif'
+  ctx.fillText(author.toUpperCase(), 0, 12, 170)
   ctx.restore()
   const t = new THREE.CanvasTexture(c)
   t.colorSpace = THREE.SRGBColorSpace
   return t
 }
 
-function Book({ position, color, height, width, depth, titleColor, tilt }) {
+function Book({ book, selected, onSelect }) {
+  const groupRef = useRef()
+  const { gl } = useThree()
+  const { author, color, title, titleColor } = book
   const spineTexture = useMemo(
-    () => makeSpineTexture(color, titleColor),
-    [color, titleColor]
+    () => makeSpineTexture({ author, color, title, titleColor }),
+    [author, color, title, titleColor]
   )
 
+  useFrame((_, delta) => {
+    if (!groupRef.current) return
+    groupRef.current.position.z = THREE.MathUtils.damp(
+      groupRef.current.position.z,
+      selected ? 0.82 : 0,
+      8,
+      delta
+    )
+    const scale = THREE.MathUtils.damp(
+      groupRef.current.scale.x,
+      selected ? 1.04 : 1,
+      8,
+      delta
+    )
+    groupRef.current.scale.setScalar(scale)
+    groupRef.current.rotation.z = THREE.MathUtils.damp(
+      groupRef.current.rotation.z,
+      selected ? 0 : book.tilt || 0,
+      8,
+      delta
+    )
+  })
+
   return (
-    <group position={position} rotation={[0, 0, tilt || 0]}>
+    <group
+      ref={groupRef}
+      position={book.position}
+      rotation={[0, 0, book.tilt || 0]}
+      onClick={(event) => {
+        event.stopPropagation()
+        onSelect(selected ? null : book.id)
+      }}
+      onPointerOver={(event) => {
+        event.stopPropagation()
+        gl.domElement.style.cursor = 'pointer'
+      }}
+      onPointerOut={() => {
+        gl.domElement.style.cursor = 'auto'
+      }}
+    >
       <mesh castShadow receiveShadow>
-        <boxGeometry args={[width, height, depth]} />
+        <boxGeometry args={[book.width, book.height, book.depth]} />
         <meshStandardMaterial
           map={spineTexture}
           roughness={0.55}
           metalness={0.05}
         />
-      </mesh>
-      <mesh position={[0, 0, depth / 2 + 0.001]}>
-        <planeGeometry args={[width * 0.96, height * 0.96]} />
-        <meshStandardMaterial color="#f0ead6" roughness={0.85} />
       </mesh>
     </group>
   )
@@ -147,10 +183,11 @@ function PhysicsBook({ book, mode }) {
   const velocity = useRef(new THREE.Vector3())
   const lastTime = useRef(0)
   const { camera, gl } = useThree()
+  const { author, color, title, titleColor } = book
 
   const spineTexture = useMemo(
-    () => makeSpineTexture(book.color, book.titleColor),
-    [book.color, book.titleColor]
+    () => makeSpineTexture({ author, color, title, titleColor }),
+    [author, color, title, titleColor]
   )
 
   const onPointerDown = useCallback(
@@ -256,10 +293,6 @@ function PhysicsBook({ book, mode }) {
               metalness={0.05}
             />
           </mesh>
-        <mesh position={[0, 0, book.depth / 2 + 0.001]}>
-          <planeGeometry args={[book.width * 0.96, book.height * 0.96]} />
-          <meshStandardMaterial color="#f0ead6" roughness={0.85} />
-        </mesh>
       </group>
     </RigidBody>
   )
@@ -268,30 +301,19 @@ function PhysicsBook({ book, mode }) {
 /* ------------------------------------------------------------------ */
 /* Shelf (horizontal plank with books)                                 */
 /* ------------------------------------------------------------------ */
-function Shelf({ y, woodTex, mode }) {
-  const books = useMemo(() => {
-    const items = []
-    let x = -3.4
-    let i = 0
-    while (x < 3.4) {
-      const w = 0.22 + Math.random() * 0.22
-      const h = 1.0 + Math.random() * 0.35
-      const d = 0.5 + Math.random() * 0.2
-      const tilt = Math.random() < 0.12 ? (Math.random() - 0.5) * 0.18 : 0
-      items.push({
-        key: i,
-        position: [x + w / 2, h / 2, 0],
-        color: BOOK_COLORS[i % BOOK_COLORS.length],
-        height: h,
-        width: w,
-        depth: d,
-        tilt,
-      })
-      x += w + 0.005
-      i++
-    }
-    return items
-  }, [])
+function Shelf({
+  y,
+  woodTex,
+  mode,
+  library,
+  shelfIndex,
+  selectedBookId,
+  onSelectBook,
+}) {
+  const books = useMemo(
+    () => buildShelfBooks(library, shelfIndex),
+    [library, shelfIndex]
+  )
 
   return (
     <group position={[0, y, 0]}>
@@ -319,16 +341,13 @@ function Shelf({ y, woodTex, mode }) {
       {/* Books */}
       {books.map((b) =>
         mode === 'play' ? (
-          <PhysicsBook key={b.key} book={b} mode={mode} />
+          <PhysicsBook key={b.id} book={b} mode={mode} />
         ) : (
           <Book
-            key={b.key}
-            position={b.position}
-            color={b.color}
-            height={b.height}
-            width={b.width}
-            depth={b.depth}
-            tilt={b.tilt}
+            key={b.id}
+            book={b}
+            selected={selectedBookId === b.id}
+            onSelect={onSelectBook}
           />
         )
       )}
@@ -339,7 +358,7 @@ function Shelf({ y, woodTex, mode }) {
 /* ------------------------------------------------------------------ */
 /* Bookshelf frame (sides + back)                                      */
 /* ------------------------------------------------------------------ */
-function Bookshelf({ mode }) {
+function Bookshelf({ mode, library, selectedBookId, onSelectBook }) {
   const woodTex = useWoodTexture()
   const woodTex2 = useWoodTexture()
 
@@ -371,10 +390,18 @@ function Bookshelf({ mode }) {
         <meshStandardMaterial map={woodTex} roughness={0.45} />
       </mesh>
       {/* Shelves with books */}
-      <Shelf y={-1.6} woodTex={woodTex} mode={mode} />
-      <Shelf y={0.4} woodTex={woodTex} mode={mode} />
-      <Shelf y={2.4} woodTex={woodTex} mode={mode} />
-      <Shelf y={4.4} woodTex={woodTex} mode={mode} />
+      {[-1.6, 0.4, 2.4, 4.4].map((y, shelfIndex) => (
+        <Shelf
+          key={y}
+          y={y}
+          woodTex={woodTex}
+          mode={mode}
+          library={library}
+          shelfIndex={shelfIndex}
+          selectedBookId={selectedBookId}
+          onSelectBook={onSelectBook}
+        />
+      ))}
 
       {/* Physics colliders for frame + floor */}
       {mode === 'play' && (
