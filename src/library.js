@@ -164,27 +164,59 @@ export function saveLibrary(library) {
   }
 }
 
+function isValidIsbn(isbn) {
+  if (/^\d{13}$/.test(isbn)) {
+    const sum = [...isbn].reduce(
+      (total, digit, index) => total + Number(digit) * (index % 2 === 0 ? 1 : 3),
+      0
+    )
+    return sum % 10 === 0
+  }
+  if (!/^\d{9}[\dX]$/.test(isbn)) return false
+  const sum = [...isbn].reduce(
+    (total, digit, index) => total + (digit === 'X' ? 10 : Number(digit)) * (10 - index),
+    0
+  )
+  return sum % 11 === 0
+}
+
+async function fetchAuthorName(author) {
+  const key = typeof author?.key === 'string' ? author.key : ''
+  if (!/^\/authors\/OL\d+A$/.test(key)) return ''
+  try {
+    const response = await fetch(`https://openlibrary.org${key}.json`)
+    if (!response.ok) return ''
+    const data = await response.json()
+    return typeof data.name === 'string' ? data.name : ''
+  } catch {
+    return ''
+  }
+}
+
 export async function lookupBookByIsbn(value) {
   const isbn = String(value || '').replace(/[^0-9Xx]/g, '').toUpperCase()
-  if (isbn.length !== 10 && isbn.length !== 13) {
-    throw new Error('Enter a valid 10- or 13-digit ISBN.')
+  if (!isValidIsbn(isbn)) {
+    throw new Error('Enter a valid ISBN-10 or ISBN-13.')
   }
 
   const response = await fetch(
-    `https://openlibrary.org/api/books?bibkeys=ISBN:${encodeURIComponent(isbn)}&format=json&jscmd=data`
+    `https://openlibrary.org/isbn/${encodeURIComponent(isbn)}.json`
   )
+  if (response.status === 404) throw new Error('No book was found for that ISBN.')
   if (!response.ok) throw new Error('The book lookup is unavailable. Please try again.')
 
-  const data = await response.json()
-  const book = data[`ISBN:${isbn}`]
-  if (!book) throw new Error('No book was found for that ISBN.')
+  const book = await response.json()
+  const authorNames = await Promise.all((book.authors || []).map(fetchAuthorName))
+  const coverId = Array.isArray(book.covers)
+    ? book.covers.find((id) => Number.isInteger(id) && id > 0)
+    : null
 
   return {
-    title: book.title || '',
-    author: book.authors?.map((author) => author.name).filter(Boolean).join(', ') || '',
+    title: typeof book.title === 'string' ? book.title : '',
+    author: authorNames.filter(Boolean).join(', '),
     pageCount: asNumber(book.number_of_pages),
     isbn,
-    coverUrl: book.cover?.medium || `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg`,
+    coverUrl: coverId ? `https://covers.openlibrary.org/b/id/${coverId}-M.jpg` : '',
   }
 }
 
