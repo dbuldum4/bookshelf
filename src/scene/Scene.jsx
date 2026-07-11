@@ -38,11 +38,37 @@ function Scene({
       <pointLight position={[0, 8, -4]} intensity={0.4} color="#ffb86b" />
 
       <DeepSpaceStars />
-      <NebulaLayer seed={pixelatedGalaxy ? 31 : 17} pixelated={pixelatedGalaxy} position={[-6, 4.8, -18]} scale={[30, 20, 1]} opacity={pixelatedGalaxy ? 0.72 : 0.58} rotation={-0.08} />
-      <NebulaLayer seed={pixelatedGalaxy ? 47 : 23} pixelated={pixelatedGalaxy} position={[7, 1.2, -30]} scale={[44, 28, 1]} opacity={pixelatedGalaxy ? 0.46 : 0.34} rotation={0.22} />
-      <NebulaLayer seed={pixelatedGalaxy ? 59 : 41} pixelated={pixelatedGalaxy} position={[-3, 10, -46]} scale={[66, 40, 1]} opacity={pixelatedGalaxy ? 0.34 : 0.24} rotation={0.04} />
 
-      <group position={GALAXY_BACKDROP_POSITION} rotation={GALAXY_BACKDROP_ROTATION} scale={GALAXY_BACKDROP_SCALE}>
+      <NebulaLayer
+        seed={pixelatedGalaxy ? 31 : 17}
+        pixelated={pixelatedGalaxy}
+        position={[-6, 4.8, -18]}
+        scale={[30, 20, 1]}
+        opacity={pixelatedGalaxy ? 0.72 : 0.58}
+        rotation={-0.08}
+      />
+      <NebulaLayer
+        seed={pixelatedGalaxy ? 47 : 23}
+        pixelated={pixelatedGalaxy}
+        position={[7, 1.2, -30]}
+        scale={[44, 28, 1]}
+        opacity={pixelatedGalaxy ? 0.46 : 0.34}
+        rotation={0.22}
+      />
+      <NebulaLayer
+        seed={pixelatedGalaxy ? 59 : 41}
+        pixelated={pixelatedGalaxy}
+        position={[-3, 10, -46]}
+        scale={[66, 40, 1]}
+        opacity={pixelatedGalaxy ? 0.34 : 0.24}
+        rotation={0.04}
+      />
+
+      <group
+        position={GALAXY_BACKDROP_POSITION}
+        rotation={GALAXY_BACKDROP_ROTATION}
+        scale={GALAXY_BACKDROP_SCALE}
+      >
         {pixelatedGalaxy ? <Galaxy /> : <RealisticGalaxy />}
       </group>
 
@@ -52,14 +78,35 @@ function Scene({
         </Physics>
       ) : (
         <Float speed={1.2} rotationIntensity={0.05} floatIntensity={0.15}>
-          <Bookshelf mode={mode} library={library} selectedBookId={selectedBookId} onSelectBook={onSelectBook} />
+          <Bookshelf
+            mode={mode}
+            library={library}
+            selectedBookId={selectedBookId}
+            onSelectBook={onSelectBook}
+          />
         </Float>
       )}
 
-      <ContactShadows position={[0, -3.45, 0]} opacity={0.6} scale={20} blur={2.5} far={8} />
+      <ContactShadows
+        position={[0, -3.45, 0]}
+        opacity={0.6}
+        scale={20}
+        blur={2.5}
+        far={8}
+      />
+
       <Environment preset="night" />
+
       <CameraRig mode={mode} />
-      <OrbitControls makeDefault enabled={mode === 'custom'} enablePan={false} minDistance={6} maxDistance={22} minPolarAngle={Math.PI * 0.15} maxPolarAngle={Math.PI * 0.62} />
+      <OrbitControls
+        makeDefault
+        enabled={mode === 'custom'}
+        enablePan={false}
+        minDistance={6}
+        maxDistance={22}
+        minPolarAngle={Math.PI * 0.15}
+        maxPolarAngle={Math.PI * 0.62}
+      />
     </>
   )
 }
