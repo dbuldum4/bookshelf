@@ -76,12 +76,15 @@ function asNumber(value, fallback = 0) {
 }
 
 function normalizeTags(value) {
-  if (Array.isArray(value)) return value.filter((tag) => typeof tag === 'string' && tag.trim())
-  if (typeof value !== 'string') return []
-  return value.split(',').map((tag) => tag.trim()).filter(Boolean)
+  const tags = Array.isArray(value) ? value : typeof value === 'string' ? value.split(',') : []
+  return [...new Set(tags
+    .filter((tag) => typeof tag === 'string')
+    .map((tag) => tag.trim())
+    .filter(Boolean))]
 }
 
-function normalizeBook(book, index) {
+function normalizeBook(value, index) {
+  const book = value && typeof value === 'object' ? value : {}
   const pageCount = asNumber(book.pageCount)
   return {
     id: typeof book.id === 'string' && book.id ? book.id : makeId(book.title, index),
@@ -121,29 +124,44 @@ export function createBook(draft, index) {
   }, index)
 }
 
+function readStoredLibrary(key) {
+  try {
+    const value = JSON.parse(window.localStorage.getItem(key))
+    return Array.isArray(value) ? value : null
+  } catch {
+    return null
+  }
+}
+
 export function loadLibrary() {
   const fallback = createLibrary()
   if (typeof window === 'undefined') return fallback
 
-  try {
-    const saved = JSON.parse(window.localStorage.getItem(STORAGE_KEY))
-    if (Array.isArray(saved)) return saved.map(normalizeBook)
+  const saved = readStoredLibrary(STORAGE_KEY)
+  if (saved) return saved.map(normalizeBook)
 
-    const legacy = JSON.parse(window.localStorage.getItem(LEGACY_STORAGE_KEY))
-    if (!Array.isArray(legacy)) return fallback
+  const legacy = readStoredLibrary(LEGACY_STORAGE_KEY)
+  if (!legacy) return fallback
 
-    const legacyById = new Map(legacy.map((book) => [book.id, book]))
-    return fallback.map((book, index) => normalizeBook({
-      ...book,
-      ...legacyById.get(book.id),
-    }, index))
-  } catch {
-    return fallback
-  }
+  const legacyById = new Map(
+    legacy
+      .filter((book) => book && typeof book === 'object' && typeof book.id === 'string')
+      .map((book) => [book.id, book])
+  )
+  return fallback.map((book, index) => normalizeBook({
+    ...book,
+    ...legacyById.get(book.id),
+  }, index))
 }
 
 export function saveLibrary(library) {
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(library))
+  if (typeof window === 'undefined') return false
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(library))
+    return true
+  } catch {
+    return false
+  }
 }
 
 export async function lookupBookByIsbn(value) {
