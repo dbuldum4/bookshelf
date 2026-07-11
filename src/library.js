@@ -126,11 +126,17 @@ export function loadLibrary() {
   if (typeof window === 'undefined') return fallback
 
   try {
-    const saved = JSON.parse(
-      window.localStorage.getItem(STORAGE_KEY)
-        || window.localStorage.getItem(LEGACY_STORAGE_KEY)
-    )
-    return Array.isArray(saved) ? saved.map(normalizeBook) : fallback
+    const saved = JSON.parse(window.localStorage.getItem(STORAGE_KEY))
+    if (Array.isArray(saved)) return saved.map(normalizeBook)
+
+    const legacy = JSON.parse(window.localStorage.getItem(LEGACY_STORAGE_KEY))
+    if (!Array.isArray(legacy)) return fallback
+
+    const legacyById = new Map(legacy.map((book) => [book.id, book]))
+    return fallback.map((book, index) => normalizeBook({
+      ...book,
+      ...legacyById.get(book.id),
+    }, index))
   } catch {
     return fallback
   }
