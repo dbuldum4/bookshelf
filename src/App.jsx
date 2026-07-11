@@ -9,7 +9,9 @@ import Scene from './scene/Scene'
 const BOOKS_PER_SHELF_VIEW = 40
 
 function today() {
-  return new Date().toISOString().slice(0, 10)
+  const date = new Date()
+  const offset = date.getTimezoneOffset() * 60_000
+  return new Date(date.getTime() - offset).toISOString().slice(0, 10)
 }
 
 export default function App() {
@@ -57,7 +59,8 @@ export default function App() {
         next.currentPage = Math.min(Number(next.currentPage) || 0, next.pageCount || Number.MAX_SAFE_INTEGER)
       }
       if (updates.currentPage !== undefined) {
-        next.currentPage = Math.max(0, Number(updates.currentPage) || 0)
+        const currentPage = Math.max(0, Number(updates.currentPage) || 0)
+        next.currentPage = next.pageCount ? Math.min(currentPage, next.pageCount) : currentPage
       }
       return next
     }))
