@@ -1,4 +1,5 @@
-const STORAGE_KEY = 'bookshelf-library-v1'
+const STORAGE_KEY = 'bookshelf-library-v2'
+const LEGACY_STORAGE_KEY = 'bookshelf-library-v1'
 
 export const READING_STATUSES = ['Want to Read', 'Reading', 'Finished']
 
@@ -57,15 +58,67 @@ function defaultStatus(index) {
   return 'Want to Read'
 }
 
+function makeId(title, index) {
+  const slug = String(title || 'book')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '') || 'book'
+  const unique = globalThis.crypto?.randomUUID?.().slice(0, 8)
+    || `${Date.now().toString(36)}-${index}`
+  return `${slug}-${unique}`
+}
+
+function asNumber(value, fallback = 0) {
+  const number = Number(value)
+  return Number.isFinite(number) ? Math.max(0, Math.round(number)) : fallback
+}
+
+function normalizeTags(value) {
+  if (Array.isArray(value)) return value.filter((tag) => typeof tag === 'string' && tag.trim())
+  if (typeof value !== 'string') return []
+  return value.split(',').map((tag) => tag.trim()).filter(Boolean)
+}
+
+function normalizeBook(book, index) {
+  const pageCount = asNumber(book.pageCount)
+  return {
+    id: typeof book.id === 'string' && book.id ? book.id : makeId(book.title, index),
+    title: typeof book.title === 'string' && book.title.trim() ? book.title.trim() : 'Untitled book',
+    author: typeof book.author === 'string' && book.author.trim() ? book.author.trim() : 'Unknown author',
+    color: typeof book.color === 'string' ? book.color : COLORS[index % COLORS.length],
+    status: READING_STATUSES.includes(book.status) ? book.status : 'Want to Read',
+    notes: typeof book.notes === 'string' ? book.notes : '',
+    rating: Math.min(5, asNumber(book.rating)),
+    currentPage: Math.min(asNumber(book.currentPage), pageCount || Number.MAX_SAFE_INTEGER),
+    pageCount,
+    tags: normalizeTags(book.tags),
+    startedAt: typeof book.startedAt === 'string' ? book.startedAt : '',
+    finishedAt: typeof book.finishedAt === 'string' ? book.finishedAt : '',
+    isbn: typeof book.isbn === 'string' ? book.isbn : '',
+    coverUrl: typeof book.coverUrl === 'string' ? book.coverUrl : '',
+    createdAt: typeof book.createdAt === 'string' ? book.createdAt : new Date().toISOString(),
+  }
+}
+
 export function createLibrary() {
-  return BOOKS.map(([id, title, author], index) => ({
+  return BOOKS.map(([id, title, author], index) => normalizeBook({
     id,
     title,
     author,
     color: COLORS[index % COLORS.length],
     status: defaultStatus(index),
-    notes: '',
-  }))
+  }, index))
+}
+
+export function createBook(draft, index) {
+  return normalizeBook({
+    ...draft,
+    id: makeId(draft.title, index),
+    color: COLORS[index % COLORS.length],
+    status: draft.status || 'Want to Read',
+  }, index)
 }
 
 export function loadLibrary() {
@@ -73,34 +126,42 @@ export function loadLibrary() {
   if (typeof window === 'undefined') return fallback
 
   try {
-    const saved = JSON.parse(window.localStorage.getItem(STORAGE_KEY))
-    if (!Array.isArray(saved)) return fallback
-
-    const savedById = new Map(saved.map((book) => [book.id, book]))
-    return fallback.map((book) => {
-      const savedBook = savedById.get(book.id)
-      return savedBook
-        ? {
-            ...book,
-            status: READING_STATUSES.includes(savedBook.status)
-              ? savedBook.status
-              : book.status,
-            notes: typeof savedBook.notes === 'string' ? savedBook.notes : '',
-          }
-        : book
-    })
+    const saved = JSON.parse(
+      window.localStorage.getItem(STORAGE_KEY)
+        || window.localStorage.getItem(LEGACY_STORAGE_KEY)
+    )
+    return Array.isArray(saved) ? saved.map(normalizeBook) : fallback
   } catch {
     return fallback
   }
 }
 
 export function saveLibrary(library) {
-  window.localStorage.setItem(
-    STORAGE_KEY,
-    JSON.stringify(
-      library.map(({ id, status, notes }) => ({ id, status, notes }))
-    )
+  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(library))
+}
+
+export async function lookupBookByIsbn(value) {
+  const isbn = String(value || '').replace(/[^0-9Xx]/g, '').toUpperCase()
+  if (isbn.length !== 10 && isbn.length !== 13) {
+    throw new Error('Enter a valid 10- or 13-digit ISBN.')
+  }
+
+  const response = await fetch(
+    `https://openlibrary.org/api/books?bibkeys=ISBN:${encodeURIComponent(isbn)}&format=json&jscmd=data`
   )
+  if (!response.ok) throw new Error('The book lookup is unavailable. Please try again.')
+
+  const data = await response.json()
+  const book = data[`ISBN:${isbn}`]
+  if (!book) throw new Error('No book was found for that ISBN.')
+
+  return {
+    title: book.title || '',
+    author: book.authors?.map((author) => author.name).filter(Boolean).join(', ') || '',
+    pageCount: asNumber(book.number_of_pages),
+    isbn,
+    coverUrl: book.cover?.medium || `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg`,
+  }
 }
 
 function bookRandom(index, salt) {
