@@ -1,4 +1,5 @@
-const STORAGE_KEY = 'bookshelf-library-v1'
+const STORAGE_KEY = 'bookshelf-library-v2'
+const LEGACY_STORAGE_KEY = 'bookshelf-library-v1'
 
 export const READING_STATUSES = ['Want to Read', 'Reading', 'Finished']
 
@@ -57,50 +58,166 @@ function defaultStatus(index) {
   return 'Want to Read'
 }
 
+function makeId(title, index) {
+  const slug = String(title || 'book')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '') || 'book'
+  const unique = globalThis.crypto?.randomUUID?.().slice(0, 8)
+    || `${Date.now().toString(36)}-${index}`
+  return `${slug}-${unique}`
+}
+
+function asNumber(value, fallback = 0) {
+  const number = Number(value)
+  return Number.isFinite(number) ? Math.max(0, Math.round(number)) : fallback
+}
+
+function normalizeTags(value) {
+  const tags = Array.isArray(value) ? value : typeof value === 'string' ? value.split(',') : []
+  return [...new Set(tags
+    .filter((tag) => typeof tag === 'string')
+    .map((tag) => tag.trim())
+    .filter(Boolean))]
+}
+
+function normalizeBook(value, index) {
+  const book = value && typeof value === 'object' ? value : {}
+  const pageCount = asNumber(book.pageCount)
+  return {
+    id: typeof book.id === 'string' && book.id ? book.id : makeId(book.title, index),
+    title: typeof book.title === 'string' && book.title.trim() ? book.title.trim() : 'Untitled book',
+    author: typeof book.author === 'string' && book.author.trim() ? book.author.trim() : 'Unknown author',
+    color: typeof book.color === 'string' ? book.color : COLORS[index % COLORS.length],
+    status: READING_STATUSES.includes(book.status) ? book.status : 'Want to Read',
+    notes: typeof book.notes === 'string' ? book.notes : '',
+    rating: Math.min(5, asNumber(book.rating)),
+    currentPage: Math.min(asNumber(book.currentPage), pageCount || Number.MAX_SAFE_INTEGER),
+    pageCount,
+    tags: normalizeTags(book.tags),
+    startedAt: typeof book.startedAt === 'string' ? book.startedAt : '',
+    finishedAt: typeof book.finishedAt === 'string' ? book.finishedAt : '',
+    isbn: typeof book.isbn === 'string' ? book.isbn : '',
+    coverUrl: typeof book.coverUrl === 'string' ? book.coverUrl : '',
+    createdAt: typeof book.createdAt === 'string' ? book.createdAt : new Date().toISOString(),
+  }
+}
+
 export function createLibrary() {
-  return BOOKS.map(([id, title, author], index) => ({
+  return BOOKS.map(([id, title, author], index) => normalizeBook({
     id,
     title,
     author,
     color: COLORS[index % COLORS.length],
     status: defaultStatus(index),
-    notes: '',
-  }))
+  }, index))
+}
+
+export function createBook(draft, index) {
+  return normalizeBook({
+    ...draft,
+    id: makeId(draft.title, index),
+    color: COLORS[index % COLORS.length],
+    status: draft.status || 'Want to Read',
+  }, index)
+}
+
+function readStoredLibrary(key) {
+  try {
+    const value = JSON.parse(window.localStorage.getItem(key))
+    return Array.isArray(value) ? value : null
+  } catch {
+    return null
+  }
 }
 
 export function loadLibrary() {
   const fallback = createLibrary()
   if (typeof window === 'undefined') return fallback
 
-  try {
-    const saved = JSON.parse(window.localStorage.getItem(STORAGE_KEY))
-    if (!Array.isArray(saved)) return fallback
+  const saved = readStoredLibrary(STORAGE_KEY)
+  if (saved) return saved.map(normalizeBook)
 
-    const savedById = new Map(saved.map((book) => [book.id, book]))
-    return fallback.map((book) => {
-      const savedBook = savedById.get(book.id)
-      return savedBook
-        ? {
-            ...book,
-            status: READING_STATUSES.includes(savedBook.status)
-              ? savedBook.status
-              : book.status,
-            notes: typeof savedBook.notes === 'string' ? savedBook.notes : '',
-          }
-        : book
-    })
-  } catch {
-    return fallback
-  }
+  const legacy = readStoredLibrary(LEGACY_STORAGE_KEY)
+  if (!legacy) return fallback
+
+  const legacyById = new Map(
+    legacy
+      .filter((book) => book && typeof book === 'object' && typeof book.id === 'string')
+      .map((book) => [book.id, book])
+  )
+  return fallback.map((book, index) => normalizeBook({
+    ...book,
+    ...legacyById.get(book.id),
+  }, index))
 }
 
 export function saveLibrary(library) {
-  window.localStorage.setItem(
-    STORAGE_KEY,
-    JSON.stringify(
-      library.map(({ id, status, notes }) => ({ id, status, notes }))
+  if (typeof window === 'undefined') return false
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(library))
+    return true
+  } catch {
+    return false
+  }
+}
+
+function isValidIsbn(isbn) {
+  if (/^\d{13}$/.test(isbn)) {
+    const sum = [...isbn].reduce(
+      (total, digit, index) => total + Number(digit) * (index % 2 === 0 ? 1 : 3),
+      0
     )
+    return sum % 10 === 0
+  }
+  if (!/^\d{9}[\dX]$/.test(isbn)) return false
+  const sum = [...isbn].reduce(
+    (total, digit, index) => total + (digit === 'X' ? 10 : Number(digit)) * (10 - index),
+    0
   )
+  return sum % 11 === 0
+}
+
+async function fetchAuthorName(author) {
+  const key = typeof author?.key === 'string' ? author.key : ''
+  if (!/^\/authors\/OL\d+A$/.test(key)) return ''
+  try {
+    const response = await fetch(`https://openlibrary.org${key}.json`)
+    if (!response.ok) return ''
+    const data = await response.json()
+    return typeof data.name === 'string' ? data.name : ''
+  } catch {
+    return ''
+  }
+}
+
+export async function lookupBookByIsbn(value) {
+  const isbn = String(value || '').replace(/[^0-9Xx]/g, '').toUpperCase()
+  if (!isValidIsbn(isbn)) {
+    throw new Error('Enter a valid ISBN-10 or ISBN-13.')
+  }
+
+  const response = await fetch(
+    `https://openlibrary.org/isbn/${encodeURIComponent(isbn)}.json`
+  )
+  if (response.status === 404) throw new Error('No book was found for that ISBN.')
+  if (!response.ok) throw new Error('The book lookup is unavailable. Please try again.')
+
+  const book = await response.json()
+  const authorNames = await Promise.all((book.authors || []).map(fetchAuthorName))
+  const coverId = Array.isArray(book.covers)
+    ? book.covers.find((id) => Number.isInteger(id) && id > 0)
+    : null
+
+  return {
+    title: typeof book.title === 'string' ? book.title : '',
+    author: authorNames.filter(Boolean).join(', '),
+    pageCount: asNumber(book.number_of_pages),
+    isbn,
+    coverUrl: coverId ? `https://covers.openlibrary.org/b/id/${coverId}-M.jpg` : '',
+  }
 }
 
 function bookRandom(index, salt) {
