@@ -243,7 +243,7 @@ export default function App() {
       <Canvas
         key={graphicsQuality}
         shadows={graphics.shadows}
-        camera={{ position: [0, 2, 11], fov: 45 }}
+        camera={{ position: [0, 2, 13], fov: 45 }}
         dpr={graphics.dpr}
         gl={{ antialias: graphics.antialias }}
         onCreated={({ gl }) => {

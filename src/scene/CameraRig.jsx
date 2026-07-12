@@ -3,7 +3,7 @@ import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 
 const FIXED_TARGET = new THREE.Vector3(0, 0.5, 0)
-const FIXED_POSITION = new THREE.Vector3(0, 2, 11)
+const FIXED_POSITION = new THREE.Vector3(0, 2, 13)
 
 function holdFraming(camera, controls, position, delta) {
   camera.position.lerp(position, Math.min(1, delta * 3))
@@ -33,7 +33,7 @@ function CameraRig({ mode, reducedMotion = false }) {
 
       // Slowly orbit around the bookshelf
       angleRef.current += delta * 0.18
-      const radius = 11
+      const radius = 13
       const x = FIXED_TARGET.x + Math.cos(angleRef.current) * radius
       const z = FIXED_TARGET.z + Math.sin(angleRef.current) * radius
       const y = 2
