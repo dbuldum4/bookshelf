@@ -27,9 +27,22 @@ function BookDetails({ book, onUpdate, onDelete, onClose }) {
   if (!book) return null
 
   const progress = book.pageCount ? Math.min(100, Math.round((book.currentPage / book.pageCount) * 100)) : 0
+  const quotes = Array.isArray(book.quotes) ? book.quotes : []
 
   const removeBook = () => {
     if (window.confirm(`Remove “${book.title}” from your library?`)) onDelete()
+  }
+
+  const updateQuote = (index, value) => {
+    onUpdate({ quotes: quotes.map((quote, quoteIndex) => (quoteIndex === index ? value : quote)) })
+  }
+
+  const addQuote = () => {
+    onUpdate({ quotes: [...quotes, ''] })
+  }
+
+  const removeQuote = (index) => {
+    onUpdate({ quotes: quotes.filter((_, quoteIndex) => quoteIndex !== index) })
   }
 
   return (
@@ -134,7 +147,7 @@ function BookDetails({ book, onUpdate, onDelete, onClose }) {
 
         <div>
           <label htmlFor="book-tags" style={labelStyle}>Tags</label>
-          <input id="book-tags" value={book.tags.join(', ')} onChange={(event) => onUpdate({ tags: event.target.value.split(',').map((tag) => tag.trim()).filter(Boolean) })} placeholder="Classics, sci-fi, favorite" style={{ ...fieldStyle, height: 40, padding: '0 11px' }} />
+          <input id="book-tags" value={(book.tags || []).join(', ')} onChange={(event) => onUpdate({ tags: event.target.value.split(',').map((tag) => tag.trim()).filter(Boolean) })} placeholder="Classics, sci-fi, favorite" style={{ ...fieldStyle, height: 40, padding: '0 11px' }} />
         </div>
         <div>
           <label htmlFor="book-isbn" style={labelStyle}>ISBN</label>
@@ -143,6 +156,65 @@ function BookDetails({ book, onUpdate, onDelete, onClose }) {
         <div>
           <label htmlFor="book-notes" style={labelStyle}>Notes</label>
           <textarea id="book-notes" value={book.notes} onChange={(event) => onUpdate({ notes: event.target.value })} placeholder="What do you want to remember?" rows={4} style={{ ...fieldStyle, display: 'block', minHeight: 96, padding: 11, resize: 'vertical', lineHeight: 1.45 }} />
+        </div>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 7 }}>
+            <label style={{ ...labelStyle, marginBottom: 0 }}>Favorite quotes</label>
+            <button
+              type="button"
+              onClick={addQuote}
+              style={{
+                border: '1px solid rgba(255,255,255,0.12)',
+                borderRadius: 8,
+                color: '#fff',
+                background: 'rgba(255,255,255,0.08)',
+                cursor: 'pointer',
+                padding: '5px 8px',
+                font: `600 11px ${fontFamily}`,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              + Add quote
+            </button>
+          </div>
+          {(book.quotes || []).length === 0 ? (
+            <p style={{ margin: 0, color: 'rgba(255,255,255,0.42)', fontSize: 12, lineHeight: 1.4 }}>
+              Save lines you want to keep close while reading.
+            </p>
+          ) : (
+            <div style={{ display: 'grid', gap: 8 }}>
+              {(book.quotes || []).map((quote, index) => (
+                <div key={`quote-${index}`} style={{ display: 'grid', gap: 6 }}>
+                  <textarea
+                    id={index === 0 ? 'book-quotes' : undefined}
+                    aria-label={`Favorite quote ${index + 1}`}
+                    value={quote}
+                    onChange={(event) => updateQuote(index, event.target.value)}
+                    placeholder="“So we beat on, boats against the current…”"
+                    rows={3}
+                    style={{ ...fieldStyle, display: 'block', minHeight: 72, padding: 11, resize: 'vertical', lineHeight: 1.45 }}
+                  />
+                  <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                    <button
+                      type="button"
+                      onClick={() => removeQuote(index)}
+                      style={{
+                        border: '1px solid rgba(255,130,130,0.28)',
+                        borderRadius: 8,
+                        color: '#ffb3b3',
+                        background: 'rgba(255,80,80,0.08)',
+                        cursor: 'pointer',
+                        padding: '5px 8px',
+                        font: `600 11px ${fontFamily}`,
+                      }}
+                    >
+                      Remove quote
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 

@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { lookupBookByIsbn, READING_STATUSES, searchAcclaimedBooks } from '../library'
+import {
+  downloadLibraryExport,
+  lookupBookByIsbn,
+  parseLibraryImport,
+  READING_STATUSES,
+  searchAcclaimedBooks,
+} from '../library'
 
 const fontFamily =
   '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif'
@@ -52,11 +58,18 @@ function progressLabel(book) {
   return `${Math.min(100, Math.round((book.currentPage / book.pageCount) * 100))}% · ${book.currentPage}/${book.pageCount}`
 }
 
-function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook }) {
+function uniqueSorted(values) {
+  return [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+}
+
+function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook, onReplaceLibrary }) {
   const [open, setOpen] = useState(true)
   const [adding, setAdding] = useState(false)
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState('All')
+  const [authorFilter, setAuthorFilter] = useState('All')
+  const [tagFilter, setTagFilter] = useState('All')
+  const [ratingFilter, setRatingFilter] = useState('All')
   const [draft, setDraft] = useState({ title: '', author: '', isbn: '', pageCount: '', coverUrl: '' })
   const [lookupError, setLookupError] = useState('')
   const [lookingUp, setLookingUp] = useState(false)
@@ -65,22 +78,85 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook }) {
   const [suggestions, setSuggestions] = useState([])
   const [loadingSuggestions, setLoadingSuggestions] = useState(false)
   const [suggestionError, setSuggestionError] = useState('')
+  const [transferMessage, setTransferMessage] = useState('')
+  const [transferError, setTransferError] = useState('')
+  const [importing, setImporting] = useState(false)
   const blurTimer = useRef(null)
+  const importInputRef = useRef(null)
+  const transferTimer = useRef(null)
+
+  const clearTransferFeedback = () => {
+    setTransferMessage('')
+    setTransferError('')
+  }
+
+  const showTransferFeedback = (message, isError = false) => {
+    if (transferTimer.current !== null) window.clearTimeout(transferTimer.current)
+    if (isError) {
+      setTransferError(message)
+      setTransferMessage('')
+    } else {
+      setTransferMessage(message)
+      setTransferError('')
+      transferTimer.current = window.setTimeout(() => {
+        setTransferMessage('')
+        transferTimer.current = null
+      }, 5000)
+    }
+  }
 
   const stats = useMemo(() => READING_STATUSES.map((value) => ({
     label: value,
     count: library.filter((book) => book.status === value).length,
   })), [library])
 
+  const authorOptions = useMemo(
+    () => uniqueSorted(library.map((book) => book.author?.trim())),
+    [library]
+  )
+
+  const tagOptions = useMemo(
+    () => uniqueSorted(library.flatMap((book) => book.tags || [])),
+    [library]
+  )
+
+  const activeFilterCount = [status, authorFilter, tagFilter, ratingFilter]
+    .filter((value) => value !== 'All').length
+
+  const clearFilters = () => {
+    setQuery('')
+    setStatus('All')
+    setAuthorFilter('All')
+    setTagFilter('All')
+    setRatingFilter('All')
+  }
+
+  useEffect(() => {
+    if (authorFilter !== 'All' && !authorOptions.includes(authorFilter)) setAuthorFilter('All')
+  }, [authorFilter, authorOptions])
+
+  useEffect(() => {
+    if (tagFilter !== 'All' && !tagOptions.includes(tagFilter)) setTagFilter('All')
+  }, [tagFilter, tagOptions])
+
   const visibleBooks = useMemo(() => {
     const search = query.trim().toLowerCase()
     return library.filter((book) => {
       const matchesStatus = status === 'All' || book.status === status
-      const matchesSearch = !search || [book.title, book.author, ...(book.tags || [])]
-        .join(' ').toLowerCase().includes(search)
-      return matchesStatus && matchesSearch
+      const matchesAuthor = authorFilter === 'All' || book.author === authorFilter
+      const matchesTag = tagFilter === 'All' || (book.tags || []).includes(tagFilter)
+      const matchesRating = ratingFilter === 'All'
+        || (ratingFilter === '0' ? !book.rating : book.rating >= Number(ratingFilter))
+      const matchesSearch = !search || [
+        book.title,
+        book.author,
+        ...(book.tags || []),
+        ...(book.quotes || []),
+        book.notes || '',
+      ].join(' ').toLowerCase().includes(search)
+      return matchesStatus && matchesAuthor && matchesTag && matchesRating && matchesSearch
     })
-  }, [library, query, status])
+  }, [library, query, status, authorFilter, tagFilter, ratingFilter])
 
   useEffect(() => {
     const search = draft.title.trim()
@@ -119,9 +195,55 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook }) {
 
   useEffect(() => () => {
     if (blurTimer.current !== null) window.clearTimeout(blurTimer.current)
+    if (transferTimer.current !== null) window.clearTimeout(transferTimer.current)
   }, [])
 
   const changeDraft = (field, value) => setDraft((current) => ({ ...current, [field]: value }))
+
+  const exportLibrary = () => {
+    clearTransferFeedback()
+    try {
+      if (!library.length) {
+        showTransferFeedback('Add at least one book before exporting.', true)
+        return
+      }
+      const { count, filename } = downloadLibraryExport(library)
+      showTransferFeedback(`Exported ${count} book${count === 1 ? '' : 's'} to ${filename}.`)
+    } catch (error) {
+      showTransferFeedback(error instanceof Error ? error.message : 'Could not export your library.', true)
+    }
+  }
+
+  const openImportPicker = () => {
+    clearTransferFeedback()
+    importInputRef.current?.click()
+  }
+
+  const importLibrary = async (event) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+
+    setImporting(true)
+    clearTransferFeedback()
+    try {
+      const text = await file.text()
+      const { books, count } = parseLibraryImport(text)
+      const confirmed = window.confirm(
+        `Replace your current library (${library.length} book${library.length === 1 ? '' : 's'}) with ${count} imported book${count === 1 ? '' : 's'}?\n\nThis cannot be undone unless you export a backup first.`
+      )
+      if (!confirmed) {
+        showTransferFeedback('Import cancelled. Your library was not changed.')
+        return
+      }
+      onReplaceLibrary(books)
+      showTransferFeedback(`Imported ${count} book${count === 1 ? '' : 's'} from ${file.name}.`)
+    } catch (error) {
+      showTransferFeedback(error instanceof Error ? error.message : 'Could not import that library file.', true)
+    } finally {
+      setImporting(false)
+    }
+  }
 
   const chooseSuggestion = (book) => {
     setDraft((current) => ({
@@ -230,26 +352,130 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook }) {
         ))}
       </div>
 
-      <div style={{ display: 'flex', gap: 8, padding: '0 16px 12px' }}>
+      <div style={{ display: 'grid', gap: 8, padding: '0 16px 12px' }}>
         <input
           aria-label="Search your library"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search title, author, or tag"
+          placeholder="Search title, author, tag, or quote"
           style={inputStyle}
         />
-        <select aria-label="Filter by reading status" value={status} onChange={(event) => setStatus(event.target.value)} style={{ ...inputStyle, width: 102, padding: '0 6px' }}>
-          <option value="All">All</option>
-          {READING_STATUSES.map((value) => <option key={value} value={value}>{value}</option>)}
-        </select>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+          <select
+            aria-label="Filter by reading status"
+            value={status}
+            onChange={(event) => setStatus(event.target.value)}
+            style={{ ...inputStyle, padding: '0 6px' }}
+          >
+            <option value="All">All statuses</option>
+            {READING_STATUSES.map((value) => <option key={value} value={value}>{value}</option>)}
+          </select>
+          <select
+            aria-label="Filter by rating"
+            value={ratingFilter}
+            onChange={(event) => setRatingFilter(event.target.value)}
+            style={{ ...inputStyle, padding: '0 6px' }}
+          >
+            <option value="All">All ratings</option>
+            <option value="0">Not rated</option>
+            {[5, 4, 3, 2, 1].map((rating) => (
+              <option key={rating} value={String(rating)}>
+                {rating === 5 ? '5 stars' : `${rating}+ stars`}
+              </option>
+            ))}
+          </select>
+          <select
+            aria-label="Filter by author"
+            value={authorFilter}
+            onChange={(event) => setAuthorFilter(event.target.value)}
+            style={{ ...inputStyle, padding: '0 6px' }}
+          >
+            <option value="All">All authors</option>
+            {authorOptions.map((author) => <option key={author} value={author}>{author}</option>)}
+          </select>
+          <select
+            aria-label="Filter by tag"
+            value={tagFilter}
+            onChange={(event) => setTagFilter(event.target.value)}
+            style={{ ...inputStyle, padding: '0 6px' }}
+          >
+            <option value="All">All tags</option>
+            {tagOptions.map((tag) => <option key={tag} value={tag}>{tag}</option>)}
+          </select>
+        </div>
       </div>
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 16px 10px' }}>
-        <span style={{ color: 'rgba(255,255,255,0.46)', fontSize: 12 }}>{visibleBooks.length} shown</span>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, padding: '0 16px 10px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+          <span style={{ color: 'rgba(255,255,255,0.46)', fontSize: 12 }}>{visibleBooks.length} shown</span>
+          {(activeFilterCount > 0 || query.trim()) && (
+            <button
+              type="button"
+              onClick={clearFilters}
+              style={{
+                border: '1px solid rgba(255,255,255,0.12)',
+                borderRadius: 8,
+                color: 'rgba(255,255,255,0.72)',
+                background: 'rgba(255,255,255,0.06)',
+                cursor: 'pointer',
+                padding: '4px 8px',
+                font: '600 11px/1.1 ' + fontFamily,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              Clear filters
+            </button>
+          )}
+        </div>
         <button type="button" onClick={() => setAdding((value) => !value)} style={actionButton(true)}>
           {adding ? 'Cancel' : '+ Add book'}
         </button>
       </div>
+
+      <div style={{ display: 'flex', gap: 8, padding: '0 16px 10px' }}>
+        <button
+          type="button"
+          onClick={exportLibrary}
+          disabled={!library.length}
+          style={{ ...actionButton(), flex: 1, opacity: library.length ? 1 : 0.45 }}
+        >
+          Export JSON
+        </button>
+        <button
+          type="button"
+          onClick={openImportPicker}
+          disabled={importing}
+          style={{ ...actionButton(), flex: 1, opacity: importing ? 0.45 : 1 }}
+        >
+          {importing ? 'Importing…' : 'Import JSON'}
+        </button>
+        <input
+          ref={importInputRef}
+          type="file"
+          accept="application/json,.json"
+          aria-label="Import library JSON file"
+          onChange={importLibrary}
+          style={{ display: 'none' }}
+        />
+      </div>
+
+      {(transferMessage || transferError) && (
+        <p
+          role={transferError ? 'alert' : 'status'}
+          style={{
+            margin: '0 16px 10px',
+            padding: '8px 10px',
+            borderRadius: 9,
+            color: transferError ? '#ffb4b4' : '#c8f0c8',
+            background: transferError ? 'rgba(255, 90, 90, 0.12)' : 'rgba(80, 180, 100, 0.12)',
+            border: `1px solid ${transferError ? 'rgba(255, 140, 140, 0.28)' : 'rgba(140, 220, 150, 0.28)'}`,
+            fontSize: 12,
+            lineHeight: 1.35,
+          }}
+        >
+          {transferError || transferMessage}
+        </p>
+      )}
 
       {adding && (
         <form onSubmit={submit} style={{ borderTop: '1px solid rgba(255,255,255,0.1)', padding: 16, background: 'rgba(255,255,255,0.025)' }}>
@@ -385,14 +611,20 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook }) {
               )}
               <span style={{ minWidth: 0, flex: 1 }}>
                 <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13, fontWeight: 700 }}>{book.title}</span>
-                <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2, color: 'rgba(255,255,255,0.52)', fontSize: 11 }}>{book.author}</span>
+                <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2, color: 'rgba(255,255,255,0.52)', fontSize: 11 }}>
+                  {book.author}
+                  {book.rating > 0 ? ` · ${'★'.repeat(book.rating)}` : ''}
+                  {(book.quotes || []).length ? ` · ${book.quotes.length} quote${book.quotes.length === 1 ? '' : 's'}` : ''}
+                </span>
               </span>
               <span style={{ maxWidth: 78, color: selected ? '#fff' : 'rgba(255,255,255,0.48)', fontSize: 10, textAlign: 'right' }}>{progressLabel(book)}</span>
             </button>
           )
         })}
         {!visibleBooks.length && (
-          <p style={{ padding: '22px 8px', margin: 0, color: 'rgba(255,255,255,0.5)', fontSize: 13, textAlign: 'center' }}>No books match that search.</p>
+          <p style={{ padding: '22px 8px', margin: 0, color: 'rgba(255,255,255,0.5)', fontSize: 13, textAlign: 'center' }}>
+            No books match those filters.
+          </p>
         )}
       </div>
     </aside>

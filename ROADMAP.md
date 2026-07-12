@@ -7,10 +7,11 @@ The strongest next step is turning the visual demo into a bookshelf people can g
 - [x] Add, edit, and remove books with browser-local persistence and legacy-data migration.
 - [x] Search by title, author, or tag and filter by reading status.
 - [x] Look up ISBN-10 and ISBN-13 metadata and cover art through Open Library.
+- [x] Autocomplete titles and authors with acclaim-ranked Open Library suggestions.
 - [x] Track ratings, start and finish dates, page progress, tags, and notes.
 - [x] Browse the library in a searchable list and focus the matching book on the 3D shelf.
-- [ ] Import and export library data as JSON.
-- [ ] Add author, tag, and rating filters plus favorite quotes.
+- [x] Import and export library data as JSON.
+- [x] Add author, tag, and rating filters plus favorite quotes.
 - [ ] Add accessibility, performance, testing, fallback, and release infrastructure.
 
 ## Priorities
@@ -18,17 +19,18 @@ The strongest next step is turning the visual demo into a bookshelf people can g
 1. **User-managed books**
    - Completed: add, edit, remove, and search books.
    - Completed: ISBN lookup and cover art through Open Library.
+   - Completed: acclaim-ranked title and author autocomplete through Open Library.
    - Completed: preserve the procedural spine when no cover is available.
 
 2. **Portable library data**
-   - Export and import JSON.
+   - Completed: export and import JSON.
    - Consider optional cloud sync later.
    - This removes the limitation of status and notes living only in browser storage.
 
 3. **Richer reading tracking**
    - Completed: star ratings, dates started and finished, page progress, tags, and notes.
-   - Add favorite quotes.
-   - Status filtering is complete; add dedicated author, tag, and rating filters.
+   - Completed: favorite quotes.
+   - Completed: dedicated status, author, tag, and rating filters.
 
 4. **A library view alongside the 3D scene**
    - Completed: provide a searchable list for efficient management.
@@ -54,4 +56,4 @@ The strongest next step is turning the visual demo into a bookshelf people can g
 
 ## Recommended next release: Personal Library v1
 
-Finish the release with JSON import/export and broader author, tag, and rating filters. Add/remove/edit, search, status filtering, ISBN lookup, cover art, reading metadata, and list-to-shelf navigation are already implemented.
+Finish the release with JSON import/export and broader author, tag, and rating filters. Add/remove/edit, search, status filtering, ISBN lookup, acclaim-ranked autocomplete, cover art, reading metadata, and list-to-shelf navigation are already implemented.

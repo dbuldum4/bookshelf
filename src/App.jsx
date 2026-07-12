@@ -80,6 +80,12 @@ export default function App() {
     setSelectedBookId(null)
   }
 
+  const replaceLibrary = (books) => {
+    setLibrary(books)
+    setSelectedBookId(null)
+    setShelfPage(0)
+  }
+
   return (
     <div style={{ width: '100vw', height: '100vh', background: '#05010f' }}>
       <Canvas
@@ -113,6 +119,7 @@ export default function App() {
         selectedBookId={selectedBookId}
         onSelectBook={selectBook}
         onAddBook={addBook}
+        onReplaceLibrary={replaceLibrary}
       />
       <BookDetails
         book={selectedBook}

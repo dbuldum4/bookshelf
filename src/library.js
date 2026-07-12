@@ -83,6 +83,18 @@ function normalizeTags(value) {
     .filter(Boolean))]
 }
 
+function normalizeQuotes(value) {
+  const quotes = Array.isArray(value)
+    ? value
+    : typeof value === 'string' && value.trim()
+      ? [value]
+      : []
+  return quotes
+    .filter((quote) => typeof quote === 'string')
+    .map((quote) => quote.trim())
+    .filter(Boolean)
+}
+
 function normalizeBook(value, index) {
   const book = value && typeof value === 'object' ? value : {}
   const pageCount = asNumber(book.pageCount)
@@ -97,6 +109,7 @@ function normalizeBook(value, index) {
     currentPage: Math.min(asNumber(book.currentPage), pageCount || Number.MAX_SAFE_INTEGER),
     pageCount,
     tags: normalizeTags(book.tags),
+    quotes: normalizeQuotes(book.quotes),
     startedAt: typeof book.startedAt === 'string' ? book.startedAt : '',
     finishedAt: typeof book.finishedAt === 'string' ? book.finishedAt : '',
     isbn: typeof book.isbn === 'string' ? book.isbn : '',
@@ -162,6 +175,141 @@ export function saveLibrary(library) {
   } catch {
     return false
   }
+}
+
+export const LIBRARY_EXPORT_FORMAT = 'bookshelf-library'
+export const LIBRARY_EXPORT_VERSION = 1
+
+const BOOK_EXPORT_FIELDS = [
+  'id',
+  'title',
+  'author',
+  'color',
+  'status',
+  'notes',
+  'rating',
+  'currentPage',
+  'pageCount',
+  'tags',
+  'quotes',
+  'startedAt',
+  'finishedAt',
+  'isbn',
+  'coverUrl',
+  'createdAt',
+]
+
+function pickBookFields(book) {
+  const next = {}
+  for (const field of BOOK_EXPORT_FIELDS) next[field] = book[field]
+  return next
+}
+
+/** Build a portable, versioned snapshot of the full library. */
+export function buildLibraryExport(library) {
+  const books = (Array.isArray(library) ? library : []).map((book, index) =>
+    pickBookFields(normalizeBook(book, index))
+  )
+  return {
+    format: LIBRARY_EXPORT_FORMAT,
+    version: LIBRARY_EXPORT_VERSION,
+    exportedAt: new Date().toISOString(),
+    books,
+  }
+}
+
+export function libraryToJson(library) {
+  return `${JSON.stringify(buildLibraryExport(library), null, 2)}\n`
+}
+
+function extractImportedBooks(data) {
+  if (Array.isArray(data)) return data
+
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new Error('Library JSON must be an array of books or an object with a books array.')
+  }
+
+  if (typeof data.format === 'string' && data.format !== LIBRARY_EXPORT_FORMAT) {
+    throw new Error(`Unsupported library format “${data.format}”.`)
+  }
+
+  if (data.version != null) {
+    const version = Number(data.version)
+    if (!Number.isInteger(version) || version < 1 || version > LIBRARY_EXPORT_VERSION) {
+      throw new Error(`Unsupported library version “${data.version}”.`)
+    }
+  }
+
+  if (Array.isArray(data.books)) return data.books
+  if (Array.isArray(data.library)) return data.library
+
+  throw new Error('Library JSON must include a books array.')
+}
+
+/**
+ * Parse and validate a library JSON string.
+ * Accepts the versioned export shape or a bare books array.
+ * Returns normalized books that round-trip every library field.
+ */
+export function parseLibraryImport(text) {
+  if (typeof text !== 'string' || !text.trim()) {
+    throw new Error('Choose a non-empty JSON file to import.')
+  }
+
+  let data
+  try {
+    data = JSON.parse(text)
+  } catch {
+    throw new Error('That file is not valid JSON.')
+  }
+
+  const rawBooks = extractImportedBooks(data)
+  if (!rawBooks.length) {
+    throw new Error('That library file does not contain any books.')
+  }
+
+  const seenIds = new Set()
+  const books = rawBooks.map((entry, index) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      throw new Error(`Book at position ${index + 1} is not a valid object.`)
+    }
+
+    const book = pickBookFields(normalizeBook(entry, index))
+    if (seenIds.has(book.id)) {
+      book.id = makeId(book.title, index)
+    }
+    seenIds.add(book.id)
+    return book
+  })
+
+  return {
+    books,
+    count: books.length,
+    format: data && typeof data === 'object' && !Array.isArray(data) ? data.format || null : null,
+    version: data && typeof data === 'object' && !Array.isArray(data) ? data.version ?? null : null,
+  }
+}
+
+/** Trigger a browser download of the library as JSON. */
+export function downloadLibraryExport(library, filename) {
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    throw new Error('Export is only available in the browser.')
+  }
+
+  const json = libraryToJson(library)
+  const stamp = new Date().toISOString().slice(0, 10)
+  const name = filename || `bookshelf-library-${stamp}.json`
+  const blob = new Blob([json], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = name
+  anchor.rel = 'noopener'
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 0)
+  return { filename: name, count: Array.isArray(library) ? library.length : 0 }
 }
 
 function isValidIsbn(isbn) {
