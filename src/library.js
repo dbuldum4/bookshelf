@@ -46,6 +46,13 @@ const BOOKS = [
   ['the-shadow-of-the-wind', 'The Shadow of the Wind', 'Carlos Ruiz Zafón'],
 ]
 
+export const ACCLAIMED_BOOKS = BOOKS.map(([id, title, author], index) => ({
+  id,
+  title,
+  author,
+  acclaimRank: index + 1,
+}))
+
 const COLORS = [
   '#b3303a', '#2d5a8a', '#2e7d52', '#c98a2b', '#6a3d8a',
   '#8a2b3c', '#1f4d6b', '#5a7a2b', '#a83a2b', '#3a4a8a',

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { lookupBookByIsbn, READING_STATUSES } from '../library'
+import { ACCLAIMED_BOOKS, lookupBookByIsbn, READING_STATUSES } from '../library'
 
 const fontFamily =
   '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif'
@@ -60,6 +60,8 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook }) {
   const [draft, setDraft] = useState({ title: '', author: '', isbn: '', pageCount: '', coverUrl: '' })
   const [lookupError, setLookupError] = useState('')
   const [lookingUp, setLookingUp] = useState(false)
+  const [showSuggestions, setShowSuggestions] = useState(false)
+  const [activeSuggestion, setActiveSuggestion] = useState(0)
 
   const stats = useMemo(() => READING_STATUSES.map((value) => ({
     label: value,
@@ -76,7 +78,37 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook }) {
     })
   }, [library, query, status])
 
+  const suggestions = useMemo(() => {
+    const search = draft.title.trim().toLowerCase()
+    if (!search) return []
+    return ACCLAIMED_BOOKS
+      .filter((book) => `${book.title} ${book.author}`.toLowerCase().includes(search))
+      .slice(0, 6)
+  }, [draft.title])
+
   const changeDraft = (field, value) => setDraft((current) => ({ ...current, [field]: value }))
+
+  const chooseSuggestion = (book) => {
+    setDraft((current) => ({ ...current, title: book.title, author: book.author }))
+    setShowSuggestions(false)
+    setActiveSuggestion(0)
+  }
+
+  const handleTitleKeyDown = (event) => {
+    if (!showSuggestions || !suggestions.length) return
+    if (event.key === 'ArrowDown') {
+      event.preventDefault()
+      setActiveSuggestion((index) => (index + 1) % suggestions.length)
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault()
+      setActiveSuggestion((index) => (index - 1 + suggestions.length) % suggestions.length)
+    } else if (event.key === 'Enter') {
+      event.preventDefault()
+      chooseSuggestion(suggestions[activeSuggestion])
+    } else if (event.key === 'Escape') {
+      setShowSuggestions(false)
+    }
+  }
 
   const findByIsbn = async () => {
     setLookingUp(true)
@@ -165,7 +197,79 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook }) {
       {adding && (
         <form onSubmit={submit} style={{ borderTop: '1px solid rgba(255,255,255,0.1)', padding: 16, background: 'rgba(255,255,255,0.025)' }}>
           <div style={{ display: 'grid', gap: 8 }}>
-            <input required value={draft.title} onChange={(event) => changeDraft('title', event.target.value)} placeholder="Title" aria-label="Book title" style={inputStyle} />
+            <div style={{ position: 'relative' }}>
+              <input
+                required
+                role="combobox"
+                aria-autocomplete="list"
+                aria-controls="acclaimed-book-suggestions"
+                aria-expanded={showSuggestions && suggestions.length > 0}
+                aria-activedescendant={showSuggestions && suggestions.length ? `book-suggestion-${suggestions[activeSuggestion].id}` : undefined}
+                value={draft.title}
+                onChange={(event) => {
+                  changeDraft('title', event.target.value)
+                  setShowSuggestions(true)
+                  setActiveSuggestion(0)
+                }}
+                onFocus={() => setShowSuggestions(true)}
+                onBlur={() => window.setTimeout(() => setShowSuggestions(false), 100)}
+                onKeyDown={handleTitleKeyDown}
+                placeholder="Title"
+                aria-label="Book title"
+                autoComplete="off"
+                style={inputStyle}
+              />
+              {showSuggestions && suggestions.length > 0 && (
+                <div
+                  id="acclaimed-book-suggestions"
+                  role="listbox"
+                  aria-label="Acclaimed book suggestions"
+                  style={{
+                    position: 'absolute',
+                    zIndex: 2,
+                    top: 40,
+                    left: 0,
+                    right: 0,
+                    overflow: 'hidden',
+                    border: '1px solid rgba(255,255,255,0.15)',
+                    borderRadius: 10,
+                    background: 'rgba(24, 22, 42, 0.98)',
+                    boxShadow: '0 14px 32px rgba(0,0,0,0.42)',
+                  }}
+                >
+                  {suggestions.map((book, index) => (
+                    <button
+                      id={`book-suggestion-${book.id}`}
+                      role="option"
+                      aria-selected={index === activeSuggestion}
+                      type="button"
+                      key={book.id}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onMouseEnter={() => setActiveSuggestion(index)}
+                      onClick={() => chooseSuggestion(book)}
+                      style={{
+                        width: '100%',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 9,
+                        border: 0,
+                        color: '#fff',
+                        background: index === activeSuggestion ? 'rgba(155, 119, 246, 0.24)' : 'transparent',
+                        padding: '8px 10px',
+                        textAlign: 'left',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <span style={{ width: 22, color: 'rgba(201, 180, 255, 0.75)', fontSize: 10, fontWeight: 700 }}>#{book.acclaimRank}</span>
+                      <span style={{ minWidth: 0 }}>
+                        <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, fontWeight: 700 }}>{book.title}</span>
+                        <span style={{ display: 'block', marginTop: 1, color: 'rgba(255,255,255,0.5)', fontSize: 10 }}>{book.author}</span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             <input value={draft.author} onChange={(event) => changeDraft('author', event.target.value)} placeholder="Author" aria-label="Book author" style={inputStyle} />
             <div style={{ display: 'flex', gap: 8 }}>
               <input value={draft.isbn} onChange={(event) => changeDraft('isbn', event.target.value)} placeholder="ISBN (optional)" aria-label="ISBN" style={inputStyle} />
