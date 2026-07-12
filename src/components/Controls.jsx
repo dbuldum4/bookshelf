@@ -40,6 +40,7 @@ const graphicsQualityOptions = [
   { value: 'low', label: 'Low' },
   { value: 'medium', label: 'Medium' },
   { value: 'high', label: 'High' },
+  { value: 'ultra', label: 'Ultra' },
 ]
 
 function Controls({

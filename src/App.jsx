@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
+import * as THREE from 'three'
 import BookDetails from './components/BookDetails'
 import Controls from './components/Controls'
 import LibraryPanel from './components/LibraryPanel'
@@ -245,8 +246,15 @@ export default function App() {
         shadows={graphics.shadows}
         camera={{ position: [0, 2, 13], fov: 45 }}
         dpr={graphics.dpr}
-        gl={{ antialias: graphics.antialias }}
+        gl={{
+          antialias: graphics.antialias,
+          toneMappingExposure: 1.05,
+          powerPreference: 'high-performance',
+        }}
         onCreated={({ gl }) => {
+          // ACES keeps warm wood + cool galaxy from clipping into neon
+          gl.toneMapping = THREE.ACESFilmicToneMapping
+          gl.toneMappingExposure = 1.05
           const canvas = gl.domElement
           canvas.tabIndex = 0
           canvas.setAttribute('role', 'application')

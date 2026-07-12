@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import { DEFAULT_GRAPHICS_QUALITY, getGraphicsPreset } from '../graphicsQuality'
@@ -136,16 +136,34 @@ function makeStarTexture() {
   canvas.width = size
   canvas.height = size
   const ctx = canvas.getContext('2d')
+  // Soft core + faint diffraction bloom for toy-star read
   const grad = ctx.createRadialGradient(
     size / 2, size / 2, 0,
     size / 2, size / 2, size / 2
   )
   grad.addColorStop(0, 'rgba(255,255,255,1)')
-  grad.addColorStop(0.15, 'rgba(255,255,255,0.7)')
-  grad.addColorStop(0.4, 'rgba(255,255,255,0.15)')
+  grad.addColorStop(0.08, 'rgba(255,255,255,0.92)')
+  grad.addColorStop(0.22, 'rgba(255,255,255,0.45)')
+  grad.addColorStop(0.48, 'rgba(255,255,255,0.1)')
   grad.addColorStop(1, 'rgba(255,255,255,0)')
   ctx.fillStyle = grad
   ctx.fillRect(0, 0, size, size)
+  // Tiny cross sparkle for bright giants (reads only at larger point sizes)
+  ctx.globalCompositeOperation = 'lighter'
+  const cx = size / 2
+  const cy = size / 2
+  const spike = ctx.createLinearGradient(cx, 0, cx, size)
+  spike.addColorStop(0, 'rgba(255,255,255,0)')
+  spike.addColorStop(0.5, 'rgba(255,255,255,0.35)')
+  spike.addColorStop(1, 'rgba(255,255,255,0)')
+  ctx.fillStyle = spike
+  ctx.fillRect(cx - 0.8, 4, 1.6, size - 8)
+  const spikeH = ctx.createLinearGradient(0, cy, size, cy)
+  spikeH.addColorStop(0, 'rgba(255,255,255,0)')
+  spikeH.addColorStop(0.5, 'rgba(255,255,255,0.28)')
+  spikeH.addColorStop(1, 'rgba(255,255,255,0)')
+  ctx.fillStyle = spikeH
+  ctx.fillRect(4, cy - 0.8, size - 8, 1.6)
   const tex = new THREE.CanvasTexture(canvas)
   tex.colorSpace = THREE.SRGBColorSpace
   return tex
@@ -161,10 +179,11 @@ function makeGlowTexture() {
     size / 2, size / 2, 0,
     size / 2, size / 2, size / 2
   )
-  grad.addColorStop(0, 'rgba(255,245,220,0.9)')
-  grad.addColorStop(0.08, 'rgba(255,230,180,0.5)')
-  grad.addColorStop(0.25, 'rgba(200,180,255,0.12)')
-  grad.addColorStop(0.6, 'rgba(120,100,200,0.03)')
+  // Soft toy-core glow: warm gold center, faint cool fringe — not harsh
+  grad.addColorStop(0, 'rgba(255,248,230,0.92)')
+  grad.addColorStop(0.1, 'rgba(255,228,170,0.48)')
+  grad.addColorStop(0.28, 'rgba(210,185,255,0.1)')
+  grad.addColorStop(0.58, 'rgba(130,120,210,0.025)')
   grad.addColorStop(1, 'rgba(0,0,0,0)')
   ctx.fillStyle = grad
   ctx.fillRect(0, 0, size, size)
@@ -194,9 +213,10 @@ function makeNebulaTexture(seed, pixelated = false, detail = {}) {
   canvas.height = size
   const ctx = canvas.getContext('2d')
   const rand = seededRandom(seed)
+  // Pixelated keeps punchy sticker colors; realistic path is cleaner blues/pinks/golds
   const palette = pixelated
     ? ['80,64,255', '26,220,255', '255,96,190', '255,190,105']
-    : ['82,105,255', '54,190,255', '255,112,176', '255,205,130']
+    : ['90,120,255', '70,160,240', '255,150,190', '255,210,150']
 
   ctx.clearRect(0, 0, size, size)
   ctx.globalCompositeOperation = 'lighter'
@@ -206,9 +226,11 @@ function makeNebulaTexture(seed, pixelated = false, detail = {}) {
     const y = size * (0.22 + rand() * 0.58)
     const r = size * (0.16 + rand() * 0.28)
     const color = palette[Math.floor(rand() * palette.length)]
+    const blobAlpha = pixelated ? 0.16 + rand() * 0.18 : 0.12 + rand() * 0.14
+    const midAlpha = pixelated ? 0.045 + rand() * 0.06 : 0.035 + rand() * 0.045
     const grad = ctx.createRadialGradient(x, y, 0, x, y, r)
-    grad.addColorStop(0, `rgba(${color},${0.16 + rand() * 0.18})`)
-    grad.addColorStop(0.45, `rgba(${color},${0.045 + rand() * 0.06})`)
+    grad.addColorStop(0, `rgba(${color},${blobAlpha})`)
+    grad.addColorStop(0.45, `rgba(${color},${midAlpha})`)
     grad.addColorStop(1, `rgba(${color},0)`)
     ctx.fillStyle = grad
     ctx.fillRect(0, 0, size, size)
@@ -224,8 +246,18 @@ function makeNebulaTexture(seed, pixelated = false, detail = {}) {
     const drift = (rand() - 0.5) * size * 0.14
     const x = centerX + Math.cos(angle) * r + drift
     const y = centerY + Math.sin(angle) * r * 0.46 + (rand() - 0.5) * (20 + r * 0.12)
-    const alpha = Math.max(0.02, 0.22 - r / size * 0.28) * (0.4 + rand() * 0.8)
-    const color = palette[Math.floor(rand() * palette.length)]
+    const alphaBase = pixelated ? 0.22 : 0.18
+    const alpha = Math.max(0.02, alphaBase - r / size * 0.28) * (0.4 + rand() * 0.8)
+    // Realistic: bias palette by radius — gold near core, blue outward, soft pink mid
+    let color
+    if (pixelated) {
+      color = palette[Math.floor(rand() * palette.length)]
+    } else {
+      const t = r / (size * 0.52)
+      if (t < 0.22) color = palette[3] // soft gold
+      else if (t < 0.55) color = rand() < 0.22 ? palette[2] : palette[1] // soft pink or cyan-blue
+      else color = palette[0] // deep blue
+    }
 
     ctx.fillStyle = `rgba(${color},${alpha})`
     if (pixelated) {
@@ -239,8 +271,8 @@ function makeNebulaTexture(seed, pixelated = false, detail = {}) {
   }
 
   const coreGrad = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, size * 0.12)
-  coreGrad.addColorStop(0, pixelated ? 'rgba(190,90,255,0.45)' : 'rgba(255,244,220,0.5)')
-  coreGrad.addColorStop(0.28, 'rgba(115,135,255,0.18)')
+  coreGrad.addColorStop(0, pixelated ? 'rgba(190,90,255,0.45)' : 'rgba(255,246,220,0.48)')
+  coreGrad.addColorStop(0.28, pixelated ? 'rgba(115,135,255,0.18)' : 'rgba(120,145,255,0.14)')
   coreGrad.addColorStop(1, 'rgba(115,135,255,0)')
   ctx.fillStyle = coreGrad
   ctx.fillRect(0, 0, size, size)
@@ -305,8 +337,9 @@ function DeepSpaceStars({ graphics: graphicsProp } = {}) {
     }
 
     return {
-      near: makeShell(graphics.starNearCount, 38, 85, '#718cff', '#fff3dc'),
-      far: makeShell(graphics.starFarCount, 90, 165, '#243d96', '#8aa9ff'),
+      // Cool blue ↔ warm white only (no neon / magenta)
+      near: makeShell(graphics.starNearCount, 38, 85, '#7a92ff', '#fff4e4'),
+      far: makeShell(graphics.starFarCount, 90, 165, '#2a4498', '#9ab4ff'),
     }
   }, [graphics.starNearCount, graphics.starFarCount])
 
@@ -357,14 +390,23 @@ function DeepSpaceStars({ graphics: graphicsProp } = {}) {
 
 function NebulaLayer({ seed, pixelated, graphics: graphicsProp, position, scale, opacity, rotation = 0 }) {
   const graphics = resolveGraphics(graphicsProp)
-  const texture = useMemo(
-    () => makeNebulaTexture(seed, pixelated, {
+  // Create+dispose in one effect so StrictMode / quality toggles cannot leak or free live maps
+  const [texture, setTexture] = useState(null)
+
+  useEffect(() => {
+    const next = makeNebulaTexture(seed, pixelated, {
       textureSize: graphics.nebulaTextureSize,
       blobCount: graphics.nebulaBlobCount,
       particleCount: graphics.nebulaParticleCount,
-    }),
-    [seed, pixelated, graphics.nebulaTextureSize, graphics.nebulaBlobCount, graphics.nebulaParticleCount],
-  )
+    })
+    setTexture(next)
+    return () => {
+      setTexture(null)
+      next.dispose()
+    }
+  }, [seed, pixelated, graphics.nebulaTextureSize, graphics.nebulaBlobCount, graphics.nebulaParticleCount])
+
+  if (!texture) return null
 
   return (
     <sprite position={position} scale={scale}>
@@ -386,14 +428,15 @@ function RealisticGalaxy({ graphics: graphicsProp } = {}) {
   const glowTex = useMemo(() => makeGlowTexture(), [])
   const coreRef = useRef()
   const armsRef = useRef()
+  const giantsRef = useRef()
   const haloRef = useRef()
   const dustRef = useRef()
   const farRef = useRef()
 
-  const { core, arms, halo, dust, far } = useMemo(() => {
+  const { core, arms, giants, halo, dust, far } = useMemo(() => {
     const radius = 72
 
-    // ---- Core (dense bright bulge) ----
+    // ---- Core (dense bright bulge) — warm white / gold only ----
     const coreCount = graphics.realisticCore
     const corePos = new Float32Array(coreCount * 3)
     const coreCol = new Float32Array(coreCount * 3)
@@ -413,7 +456,7 @@ function RealisticGalaxy({ graphics: graphicsProp } = {}) {
       coreCol[i3 + 2] = c.b
     }
 
-    // ---- Spiral arms ----
+    // ---- Spiral arms — white → soft blue → deep blue ----
     const armCount = graphics.realisticArms
     const armPos = new Float32Array(armCount * 3)
     const armCol = new Float32Array(armCount * 3)
@@ -421,9 +464,9 @@ function RealisticGalaxy({ graphics: graphicsProp } = {}) {
     const spin = 0.82
     const randomnessPower = 2.35
     const innerWhite = new THREE.Color('#ffffff')
-    const midBlue = new THREE.Color('#8fb8ff')
-    const outerBlue = new THREE.Color('#3d5cff')
-    const nebulaPink = new THREE.Color('#ff6b9d')
+    const midBlue = new THREE.Color('#a0c4ff')
+    const outerBlue = new THREE.Color('#3a58e8')
+    const softPink = new THREE.Color('#ff8eb0')
     for (let i = 0; i < armCount; i++) {
       const i3 = i * 3
       const r = Math.pow(Math.random(), 0.78) * radius
@@ -450,27 +493,78 @@ function RealisticGalaxy({ graphics: graphicsProp } = {}) {
 
       let c
       if (r < 12) {
-        c = innerWhite.clone().lerp(midBlue, r / 12 * 0.5)
+        c = innerWhite.clone().lerp(midBlue, r / 12 * 0.45)
       } else if (r < 40) {
         c = midBlue.clone().lerp(outerBlue, (r - 12) / 28)
       } else {
         c = outerBlue.clone()
       }
-      // Sprinkle nebula pinks
-      if (Math.random() < 0.04 && r > 10 && r < 45) {
-        c.lerp(nebulaPink, 0.5 + Math.random() * 0.4)
+      // Soft pink sprinkle — rare, restrained
+      if (Math.random() < 0.018 && r > 10 && r < 45) {
+        c.lerp(softPink, 0.28 + Math.random() * 0.22)
       }
       armCol[i3] = c.r
       armCol[i3 + 1] = c.g
       armCol[i3 + 2] = c.b
     }
 
-    // ---- Halo (diffuse outer stars) ----
+    // ---- Bright giants (size variation without custom shaders) ----
+    // ~4% of arm count, capped; plus a few core sparkles
+    const armGiantCount = Math.min(800, Math.max(40, Math.floor(armCount * 0.04)))
+    const coreGiantCount = Math.min(60, Math.max(12, Math.floor(coreCount * 0.03)))
+    const giantCount = armGiantCount + coreGiantCount
+    const giantPos = new Float32Array(giantCount * 3)
+    const giantCol = new Float32Array(giantCount * 3)
+    const giantWarm = new THREE.Color('#fff4dc')
+    const giantGold = new THREE.Color('#ffd89a')
+    const giantSoftBlue = new THREE.Color('#c8dcff')
+    for (let i = 0; i < armGiantCount; i++) {
+      const i3 = i * 3
+      const r = 8 + Math.pow(Math.random(), 0.85) * (radius * 0.72)
+      const branchAngle = ((i % branches) / branches) * Math.PI * 2
+      const spinAngle = r * spin * 0.075
+      const rx =
+        Math.pow(Math.random(), randomnessPower) *
+        (Math.random() < 0.5 ? 1 : -1) *
+        0.32 *
+        r
+      const ry = (Math.random() - 0.5) * (1.6 + r * 0.08)
+      const rz =
+        Math.pow(Math.random(), randomnessPower) *
+        (Math.random() < 0.5 ? 1 : -1) *
+        0.32 *
+        r
+      giantPos[i3] = Math.cos(branchAngle + spinAngle) * r + rx
+      giantPos[i3 + 1] = ry
+      giantPos[i3 + 2] = Math.sin(branchAngle + spinAngle) * r + rz
+      const c = giantWarm.clone().lerp(
+        r < 22 ? giantGold : giantSoftBlue,
+        0.35 + Math.random() * 0.45,
+      )
+      giantCol[i3] = c.r
+      giantCol[i3 + 1] = c.g
+      giantCol[i3 + 2] = c.b
+    }
+    for (let i = 0; i < coreGiantCount; i++) {
+      const i3 = (armGiantCount + i) * 3
+      const r = Math.pow(Math.random(), 1.8) * 8
+      const theta = Math.random() * Math.PI * 2
+      const phi = Math.acos(2 * Math.random() - 1)
+      giantPos[i3] = r * Math.sin(phi) * Math.cos(theta)
+      giantPos[i3 + 1] = r * Math.cos(phi) * 0.55
+      giantPos[i3 + 2] = r * Math.sin(phi) * Math.sin(theta)
+      const c = giantWarm.clone().lerp(giantGold, 0.4 + Math.random() * 0.5)
+      giantCol[i3] = c.r
+      giantCol[i3 + 1] = c.g
+      giantCol[i3 + 2] = c.b
+    }
+
+    // ---- Halo — faint cool blues ----
     const haloCount = graphics.realisticHalo
     const haloPos = new Float32Array(haloCount * 3)
     const haloCol = new Float32Array(haloCount * 3)
-    const haloBlue = new THREE.Color('#4a6aff')
-    const haloFaint = new THREE.Color('#2a2a55')
+    const haloBlue = new THREE.Color('#5a78ff')
+    const haloFaint = new THREE.Color('#2c3458')
     for (let i = 0; i < haloCount; i++) {
       const i3 = i * 3
       const r = 28 + Math.pow(Math.random(), 0.48) * 62
@@ -485,13 +579,14 @@ function RealisticGalaxy({ graphics: graphicsProp } = {}) {
       haloCol[i3 + 2] = c.b
     }
 
-    // ---- Faint volumetric dust clouds between arm and halo layers ----
+    // ---- Dust — cooler blues + soft rose; gold only near core ----
     const dustCount = graphics.realisticDust
     const dustPos = new Float32Array(dustCount * 3)
     const dustCol = new Float32Array(dustCount * 3)
-    const dustBlue = new THREE.Color('#5e83ff')
-    const dustRose = new THREE.Color('#ff6fa8')
-    const dustGold = new THREE.Color('#ffc783')
+    const dustBlue = new THREE.Color('#6a8cff')
+    const dustCool = new THREE.Color('#4a6ec8')
+    const dustRose = new THREE.Color('#ff9aba')
+    const dustGold = new THREE.Color('#ffd8a0')
     for (let i = 0; i < dustCount; i++) {
       const i3 = i * 3
       const r = 12 + Math.pow(Math.random(), 0.62) * radius
@@ -501,19 +596,21 @@ function RealisticGalaxy({ graphics: graphicsProp } = {}) {
       dustPos[i3] = Math.cos(angle) * r + (Math.random() - 0.5) * spread
       dustPos[i3 + 1] = (Math.random() - 0.5) * (5 + r * 0.18)
       dustPos[i3 + 2] = Math.sin(angle) * r + (Math.random() - 0.5) * spread
-      const c = dustBlue.clone().lerp(dustRose, Math.random() * 0.7)
-      if (Math.random() < 0.25) c.lerp(dustGold, 0.35)
+      const c = dustBlue.clone().lerp(dustCool, Math.random() * 0.55)
+      if (Math.random() < 0.35) c.lerp(dustRose, 0.25 + Math.random() * 0.3)
+      // Gold only near the core radius
+      if (r < 22 && Math.random() < 0.18) c.lerp(dustGold, 0.3)
       dustCol[i3] = c.r
       dustCol[i3 + 1] = c.g
       dustCol[i3 + 2] = c.b
     }
 
-    // ---- Very distant star field behind the main galaxy ----
+    // ---- Far field — soft blue-white only ----
     const farCount = graphics.realisticFar
     const farPos = new Float32Array(farCount * 3)
     const farCol = new Float32Array(farCount * 3)
-    const farBlue = new THREE.Color('#8fb8ff')
-    const farWhite = new THREE.Color('#fff4df')
+    const farBlue = new THREE.Color('#9ab8ff')
+    const farWhite = new THREE.Color('#eef4ff')
     for (let i = 0; i < farCount; i++) {
       const i3 = i * 3
       const x = (Math.random() - 0.5) * 180
@@ -531,6 +628,7 @@ function RealisticGalaxy({ graphics: graphicsProp } = {}) {
     return {
       core: { pos: corePos, col: coreCol, count: coreCount },
       arms: { pos: armPos, col: armCol, count: armCount },
+      giants: { pos: giantPos, col: giantCol, count: giantCount },
       halo: { pos: haloPos, col: haloCol, count: haloCount },
       dust: { pos: dustPos, col: dustCol, count: dustCount },
       far: { pos: farPos, col: farCol, count: farCount },
@@ -544,23 +642,45 @@ function RealisticGalaxy({ graphics: graphicsProp } = {}) {
   ])
 
   useFrame((_, delta) => {
-    if (coreRef.current) coreRef.current.rotation.y += delta * 0.015
-    if (armsRef.current) armsRef.current.rotation.y += delta * 0.015
-    if (haloRef.current) haloRef.current.rotation.y += delta * 0.008
-    if (dustRef.current) dustRef.current.rotation.y -= delta * 0.006
-    if (farRef.current) farRef.current.rotation.y += delta * 0.002
+    // Elegant differential rotation — core/arms faster, far almost still
+    if (coreRef.current) coreRef.current.rotation.y += delta * 0.012
+    if (armsRef.current) armsRef.current.rotation.y += delta * 0.012
+    if (giantsRef.current) giantsRef.current.rotation.y += delta * 0.012
+    if (haloRef.current) haloRef.current.rotation.y += delta * 0.007
+    if (dustRef.current) dustRef.current.rotation.y -= delta * 0.004
+    if (farRef.current) farRef.current.rotation.y += delta * 0.001
   })
 
   return (
     <group>
-      {/* Central glow billboard */}
-      <sprite scale={[22, 22, 1]}>
+      {/* Central glow billboards — layered soft toy core */}
+      <sprite scale={[28, 28, 1]}>
         <spriteMaterial
           map={glowTex}
           transparent
-          opacity={0.7}
+          opacity={0.38}
           depthWrite={false}
           blending={THREE.AdditiveBlending}
+          color="#c8b0ff"
+        />
+      </sprite>
+      <sprite scale={[20, 20, 1]}>
+        <spriteMaterial
+          map={glowTex}
+          transparent
+          opacity={0.72}
+          depthWrite={false}
+          blending={THREE.AdditiveBlending}
+        />
+      </sprite>
+      <sprite scale={[9, 9, 1]}>
+        <spriteMaterial
+          map={glowTex}
+          transparent
+          opacity={0.55}
+          depthWrite={false}
+          blending={THREE.AdditiveBlending}
+          color="#ffe8b8"
         />
       </sprite>
 
@@ -575,7 +695,7 @@ function RealisticGalaxy({ graphics: graphicsProp } = {}) {
           sizeAttenuation
           map={starTex}
           transparent
-          opacity={0.34}
+          opacity={0.32}
           alphaTest={0.01}
           depthWrite={false}
           blending={THREE.AdditiveBlending}
@@ -631,6 +751,31 @@ function RealisticGalaxy({ graphics: graphicsProp } = {}) {
         />
       </points>
 
+      {/* Bright giants — larger, fewer, warmer (size break-up) */}
+      <points ref={giantsRef}>
+        <bufferGeometry>
+          <bufferAttribute
+            attach="attributes-position"
+            args={[giants.pos, 3]}
+          />
+          <bufferAttribute
+            attach="attributes-color"
+            args={[giants.col, 3]}
+          />
+        </bufferGeometry>
+        <pointsMaterial
+          size={1.35}
+          sizeAttenuation
+          map={starTex}
+          transparent
+          opacity={0.9}
+          alphaTest={0.01}
+          depthWrite={false}
+          blending={THREE.AdditiveBlending}
+          vertexColors
+        />
+      </points>
+
       {/* Nebula dust volume */}
       <points ref={dustRef}>
         <bufferGeometry>
@@ -638,11 +783,11 @@ function RealisticGalaxy({ graphics: graphicsProp } = {}) {
           <bufferAttribute attach="attributes-color" args={[dust.col, 3]} />
         </bufferGeometry>
         <pointsMaterial
-          size={1.45}
+          size={1.55}
           sizeAttenuation
           map={starTex}
           transparent
-          opacity={0.18}
+          opacity={0.16}
           alphaTest={0.01}
           depthWrite={false}
           blending={THREE.AdditiveBlending}
@@ -667,7 +812,7 @@ function RealisticGalaxy({ graphics: graphicsProp } = {}) {
           sizeAttenuation
           map={starTex}
           transparent
-          opacity={0.4}
+          opacity={0.32}
           alphaTest={0.01}
           depthWrite={false}
           blending={THREE.AdditiveBlending}

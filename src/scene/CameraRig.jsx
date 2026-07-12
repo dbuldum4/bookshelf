@@ -5,6 +5,10 @@ import * as THREE from 'three'
 const FIXED_TARGET = new THREE.Vector3(0, 0.5, 0)
 const FIXED_POSITION = new THREE.Vector3(0, 2, 13)
 
+// Scratch vectors — avoid per-frame allocations
+const scratchPos = new THREE.Vector3()
+const scratchLook = new THREE.Vector3()
+
 function holdFraming(camera, controls, position, delta) {
   camera.position.lerp(position, Math.min(1, delta * 3))
   camera.lookAt(FIXED_TARGET)
@@ -37,7 +41,8 @@ function CameraRig({ mode, reducedMotion = false }) {
       const x = FIXED_TARGET.x + Math.cos(angleRef.current) * radius
       const z = FIXED_TARGET.z + Math.sin(angleRef.current) * radius
       const y = 2
-      camera.position.lerp(new THREE.Vector3(x, y, z), Math.min(1, delta * 3))
+      scratchPos.set(x, y, z)
+      camera.position.lerp(scratchPos, Math.min(1, delta * 3))
       camera.lookAt(FIXED_TARGET)
       if (controls) {
         controls.target.lerp(FIXED_TARGET, Math.min(1, delta * 3))
@@ -49,22 +54,21 @@ function CameraRig({ mode, reducedMotion = false }) {
         return
       }
 
-      // Hold a static framing with a gentle handheld "shake"
+      // Hold framing with a very subtle handheld breathe (toy diorama, not found-footage)
       shakeRef.current += delta
       const t = shakeRef.current
-      const shake = new THREE.Vector3(
-        Math.sin(t * 0.7) * 0.06 + Math.sin(t * 1.9) * 0.02,
-        Math.sin(t * 0.5) * 0.04 + Math.sin(t * 2.3) * 0.015,
-        Math.cos(t * 0.6) * 0.06 + Math.sin(t * 1.7) * 0.02
+      scratchPos.set(
+        FIXED_POSITION.x + Math.sin(t * 0.55) * 0.028 + Math.sin(t * 1.4) * 0.01,
+        FIXED_POSITION.y + Math.sin(t * 0.4) * 0.02 + Math.sin(t * 1.7) * 0.008,
+        FIXED_POSITION.z + Math.cos(t * 0.48) * 0.028 + Math.sin(t * 1.25) * 0.01,
       )
-      camera.position.lerp(FIXED_POSITION.clone().add(shake), Math.min(1, delta * 3))
-      // Look at target with a tiny wobble so the framing breathes
-      const wobble = new THREE.Vector3(
-        Math.sin(t * 0.8) * 0.02,
-        Math.cos(t * 0.6) * 0.015,
-        0
+      camera.position.lerp(scratchPos, Math.min(1, delta * 3))
+      scratchLook.set(
+        FIXED_TARGET.x + Math.sin(t * 0.6) * 0.01,
+        FIXED_TARGET.y + Math.cos(t * 0.45) * 0.008,
+        FIXED_TARGET.z,
       )
-      camera.lookAt(FIXED_TARGET.clone().add(wobble))
+      camera.lookAt(scratchLook)
       if (controls) {
         controls.target.lerp(FIXED_TARGET, Math.min(1, delta * 3))
         controls.update()

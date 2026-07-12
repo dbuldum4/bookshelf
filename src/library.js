@@ -46,10 +46,11 @@ const BOOKS = [
   ['the-shadow-of-the-wind', 'The Shadow of the Wind', 'Carlos Ruiz Zafón'],
 ]
 
+// Saturated prop palette — toy/game readable at shelf distance
 const COLORS = [
-  '#b3303a', '#2d5a8a', '#2e7d52', '#c98a2b', '#6a3d8a',
-  '#8a2b3c', '#1f4d6b', '#5a7a2b', '#a83a2b', '#3a4a8a',
-  '#7a5a2b', '#2b6a6a',
+  '#c43a46', '#2f6aad', '#2f9460', '#e09a28', '#7a48a8',
+  '#a8324a', '#246a90', '#6a942e', '#c44830', '#4258b0',
+  '#8a6830', '#2e8a8a',
 ]
 
 function defaultStatus(index) {
@@ -414,23 +415,28 @@ export function buildShelfBooks(library, shelfIndex) {
   const shelfBooks = library.slice(start, start + 10)
   const geometry = shelfBooks.map((book, index) => {
     const globalIndex = start + index
+    // Chunky prop variance — readable silhouette differences like game set dressing
     return {
       ...book,
-      width: 0.54 + bookRandom(globalIndex, 1) * 0.18,
-      height: 1.02 + bookRandom(globalIndex, 2) * 0.28,
-      depth: 0.52 + bookRandom(globalIndex, 3) * 0.16,
-      tilt: bookRandom(globalIndex, 4) > 0.84
-        ? (bookRandom(globalIndex, 5) - 0.5) * 0.16
+      width: 0.48 + bookRandom(globalIndex, 1) * 0.28,
+      height: 0.96 + bookRandom(globalIndex, 2) * 0.38,
+      depth: 0.48 + bookRandom(globalIndex, 3) * 0.22,
+      tilt: bookRandom(globalIndex, 4) > 0.8
+        ? (bookRandom(globalIndex, 5) - 0.5) * 0.2
         : 0,
+      // Slight push-back variety so the row is not a flat wall of spines
+      zOffset: bookRandom(globalIndex, 6) > 0.72
+        ? -0.02 - bookRandom(globalIndex, 7) * 0.06
+        : bookRandom(globalIndex, 8) * 0.02,
     }
   })
-  const gap = 0.018
+  const gap = 0.02
   const totalWidth = geometry.reduce((sum, book) => sum + book.width, 0)
     + Math.max(0, geometry.length - 1) * gap
   let x = -totalWidth / 2
 
   return geometry.map((book) => {
-    const position = [x + book.width / 2, book.height / 2, 0]
+    const position = [x + book.width / 2, book.height / 2, book.zOffset || 0]
     x += book.width + gap
     return { ...book, position }
   })

@@ -1,4 +1,4 @@
-export const GRAPHICS_QUALITIES = ['low', 'medium', 'high']
+export const GRAPHICS_QUALITIES = ['low', 'medium', 'high', 'ultra']
 export const DEFAULT_GRAPHICS_QUALITY = 'medium'
 export const GRAPHICS_QUALITY_STORAGE_KEY = 'bookshelf-graphics-quality'
 
@@ -75,6 +75,31 @@ export const GRAPHICS_PRESETS = {
     realisticHalo: 6500,
     realisticDust: 4200,
     realisticFar: 5000,
+  },
+  // Max detail: denser stars/galaxy, sharper shadows, higher pixel ratio.
+  // Expect a meaningful GPU cost vs high — intended for powerful machines.
+  ultra: {
+    dpr: [1, 3],
+    antialias: true,
+    shadows: true,
+    shadowMapSize: 4096,
+    contactShadows: true,
+    contactShadowOpacity: 0.72,
+    contactShadowBlur: 3.2,
+    environment: true,
+    starNearCount: 3600,
+    starFarCount: 10500,
+    nebulaLayerCount: 4,
+    nebulaTextureSize: 2048,
+    nebulaBlobCount: 56,
+    nebulaParticleCount: 30000,
+    galaxyCount: 22000,
+    galaxyDustCount: 5200,
+    realisticCore: 8500,
+    realisticArms: 38000,
+    realisticHalo: 13000,
+    realisticDust: 8500,
+    realisticFar: 10000,
   },
 }
 

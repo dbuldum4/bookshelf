@@ -4,13 +4,14 @@ A procedural 3D bookshelf scene built with React, Vite, Three.js, and Rapier phy
 
 ## Features
 
-- Procedural bookshelf with generated wood grain, randomized books, textured spines, shelf shadows, and a floating display mode.
-- A curated 40-book library with real titles and authors rendered on each spine.
+- Stylized diorama bookshelf (toy/game prop look): painted wood grain, multi-face books with prop spines and cream page edges, shelf AO, and soft varnish sheen.
+- A curated 40-book library with real titles and authors rendered on each spine (procedural prop art — not photo covers).
 - Selectable books that pull forward and open an editable detail card.
 - Reading status and personal notes saved locally in the browser.
 - Two galaxy backdrops:
-  - Realistic: soft sprite stars, bright core glow, spiral arms, halo stars, and nebula color variation.
+  - Realistic: soft sprite stars, warm core glow, clean spiral arms, bright giants, halo, and controlled nebula color.
   - Pixelated: a simpler additive spiral galaxy made from point particles.
+- Product-shot lighting: warm key, cool galaxy fill, warm rim, and lighter float motion so the shelf feels chunky.
 - Four camera modes:
   - Fixed View: composed static framing with subtle handheld motion.
   - Rotate: automatic orbit around the bookshelf.
@@ -21,6 +22,8 @@ A procedural 3D bookshelf scene built with React, Vite, Three.js, and Rapier phy
   - Release to fling it with drag-derived velocity.
   - Use Reset to rebuild the physics scene.
   - Books collide with shelves, side panels, the back panel, top and bottom boards, and a hidden floor.
+  - Mass scales with book volume; high friction and low bounce for chunky toy physics.
+- Graphics quality presets (low / medium / high / ultra) and reduced-motion options.
 - Apple-style glass controls with segmented view selectors.
 
 ## Tech Stack
