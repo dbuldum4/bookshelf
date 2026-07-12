@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import { ACCLAIMED_BOOKS, lookupBookByIsbn, READING_STATUSES } from '../library'
+import { useEffect, useMemo, useState } from 'react'
+import { lookupBookByIsbn, READING_STATUSES, searchAcclaimedBooks } from '../library'
 
 const fontFamily =
   '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif'
@@ -62,6 +62,8 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook }) {
   const [lookingUp, setLookingUp] = useState(false)
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [activeSuggestion, setActiveSuggestion] = useState(0)
+  const [suggestions, setSuggestions] = useState([])
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false)
 
   const stats = useMemo(() => READING_STATUSES.map((value) => ({
     label: value,
@@ -78,18 +80,42 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook }) {
     })
   }, [library, query, status])
 
-  const suggestions = useMemo(() => {
-    const search = draft.title.trim().toLowerCase()
-    if (!search) return []
-    return ACCLAIMED_BOOKS
-      .filter((book) => `${book.title} ${book.author}`.toLowerCase().includes(search))
-      .slice(0, 6)
-  }, [draft.title])
+  useEffect(() => {
+    const search = draft.title.trim()
+    if (search.length < 2 || !showSuggestions) {
+      setSuggestions([])
+      setLoadingSuggestions(false)
+      return undefined
+    }
+
+    const controller = new AbortController()
+    setLoadingSuggestions(true)
+    const timer = window.setTimeout(async () => {
+      try {
+        setSuggestions(await searchAcclaimedBooks(search, controller.signal))
+        setActiveSuggestion(0)
+      } catch (error) {
+        if (error?.name !== 'AbortError') setSuggestions([])
+      } finally {
+        if (!controller.signal.aborted) setLoadingSuggestions(false)
+      }
+    }, 250)
+
+    return () => {
+      window.clearTimeout(timer)
+      controller.abort()
+    }
+  }, [draft.title, showSuggestions])
 
   const changeDraft = (field, value) => setDraft((current) => ({ ...current, [field]: value }))
 
   const chooseSuggestion = (book) => {
-    setDraft((current) => ({ ...current, title: book.title, author: book.author }))
+    setDraft((current) => ({
+      ...current,
+      title: book.title,
+      author: book.author,
+      coverUrl: book.coverUrl,
+    }))
     setShowSuggestions(false)
     setActiveSuggestion(0)
   }
@@ -219,7 +245,7 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook }) {
                 autoComplete="off"
                 style={inputStyle}
               />
-              {showSuggestions && suggestions.length > 0 && (
+              {showSuggestions && (loadingSuggestions || suggestions.length > 0) && (
                 <div
                   id="acclaimed-book-suggestions"
                   role="listbox"
@@ -237,7 +263,10 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook }) {
                     boxShadow: '0 14px 32px rgba(0,0,0,0.42)',
                   }}
                 >
-                  {suggestions.map((book, index) => (
+                  {loadingSuggestions && (
+                    <div style={{ padding: '9px 10px', color: 'rgba(255,255,255,0.55)', fontSize: 11 }}>Finding acclaimed books…</div>
+                  )}
+                  {!loadingSuggestions && suggestions.map((book, index) => (
                     <button
                       id={`book-suggestion-${book.id}`}
                       role="option"
@@ -263,7 +292,9 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook }) {
                       <span style={{ width: 22, color: 'rgba(201, 180, 255, 0.75)', fontSize: 10, fontWeight: 700 }}>#{book.acclaimRank}</span>
                       <span style={{ minWidth: 0 }}>
                         <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, fontWeight: 700 }}>{book.title}</span>
-                        <span style={{ display: 'block', marginTop: 1, color: 'rgba(255,255,255,0.5)', fontSize: 10 }}>{book.author}</span>
+                        <span style={{ display: 'block', marginTop: 1, color: 'rgba(255,255,255,0.5)', fontSize: 10 }}>
+                          {[book.author, book.firstPublishYear || '', book.rating ? `${book.rating.toFixed(1)} ★` : ''].filter(Boolean).join(' · ')}
+                        </span>
                       </span>
                     </button>
                   ))}
