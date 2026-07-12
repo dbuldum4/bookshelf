@@ -2,12 +2,23 @@
 
 The strongest next step is turning the visual demo into a bookshelf people can genuinely use.
 
+## Current progress
+
+- [x] Add, edit, and remove books with browser-local persistence and legacy-data migration.
+- [x] Search by title, author, or tag and filter by reading status.
+- [x] Look up ISBN-10 and ISBN-13 metadata and cover art through Open Library.
+- [x] Track ratings, start and finish dates, page progress, tags, and notes.
+- [x] Browse the library in a searchable list and focus the matching book on the 3D shelf.
+- [ ] Import and export library data as JSON.
+- [ ] Add author, tag, and rating filters plus favorite quotes.
+- [ ] Add accessibility, performance, testing, fallback, and release infrastructure.
+
 ## Priorities
 
 1. **User-managed books**
-   - Add, edit, remove, and search books.
-   - Support ISBN lookup and cover art through Open Library.
-   - Preserve the procedural spine when no cover is available.
+   - Completed: add, edit, remove, and search books.
+   - Completed: ISBN lookup and cover art through Open Library.
+   - Completed: preserve the procedural spine when no cover is available.
 
 2. **Portable library data**
    - Export and import JSON.
@@ -15,12 +26,13 @@ The strongest next step is turning the visual demo into a bookshelf people can g
    - This removes the limitation of status and notes living only in browser storage.
 
 3. **Richer reading tracking**
-   - Star ratings, dates started and finished, page progress, tags, and favorite quotes.
-   - Filter the physical shelf by status, author, tag, or rating.
+   - Completed: star ratings, dates started and finished, page progress, tags, and notes.
+   - Add favorite quotes.
+   - Status filtering is complete; add dedicated author, tag, and rating filters.
 
 4. **A library view alongside the 3D scene**
-   - Provide a searchable grid or list for efficient management.
-   - Selecting a result should move the view to the corresponding physical book.
+   - Completed: provide a searchable list for efficient management.
+   - Completed: selecting a result moves the view to the corresponding physical book.
    - Keep 3D as the delightful primary experience, not the only interface.
 
 5. **Performance and accessibility controls**
@@ -42,4 +54,4 @@ The strongest next step is turning the visual demo into a bookshelf people can g
 
 ## Recommended next release: Personal Library v1
 
-Ship a coherent first release with add/remove books, search and filters, ISBN lookup, and JSON import/export. This creates substantially more value than another galaxy or physics effect while preserving the project’s distinctive 3D character.
+Finish the release with JSON import/export and broader author, tag, and rating filters. Add/remove/edit, search, status filtering, ISBN lookup, cover art, reading metadata, and list-to-shelf navigation are already implemented.
