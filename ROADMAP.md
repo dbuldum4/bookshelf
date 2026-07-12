@@ -12,6 +12,7 @@ The strongest next step is turning the visual demo into a bookshelf people can g
 - [x] Browse the library in a searchable list and focus the matching book on the 3D shelf.
 - [x] Import and export library data as JSON.
 - [x] Add author, tag, and rating filters plus favorite quotes.
+- [x] Add reduced-motion, graphics-quality, keyboard navigation, focus, and mobile control options.
 - [ ] Add accessibility, performance, testing, fallback, and release infrastructure.
 
 ## Priorities
@@ -38,10 +39,10 @@ The strongest next step is turning the visual demo into a bookshelf people can g
    - Keep 3D as the delightful primary experience, not the only interface.
 
 5. **Performance and accessibility controls**
-   - Reduced-motion mode.
-   - Low, medium, and high graphics-quality presets.
-   - Keyboard book navigation and visible focus states.
-   - Mobile-friendly collapsed controls.
+   - Completed: reduced-motion mode.
+   - Completed: low, medium, and high graphics-quality presets.
+   - Completed: keyboard book navigation and visible focus states.
+   - Completed: mobile-friendly collapsed controls.
 
 6. **Engineering foundations**
    - Tests for persistence and shelf layout.

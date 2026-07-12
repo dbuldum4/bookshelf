@@ -1,14 +1,20 @@
 import { useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
+import { DEFAULT_GRAPHICS_QUALITY, getGraphicsPreset } from '../graphicsQuality'
 
-function Galaxy() {
+function resolveGraphics(graphics) {
+  return graphics || getGraphicsPreset(DEFAULT_GRAPHICS_QUALITY)
+}
+
+function Galaxy({ graphics: graphicsProp } = {}) {
+  const graphics = resolveGraphics(graphicsProp)
   const pointsRef = useRef()
   const dustRef = useRef()
 
   const { positions, colors, dustPositions, dustColors } = useMemo(() => {
-    const count = 11000
-    const dustCount = 2600
+    const count = graphics.galaxyCount
+    const dustCount = graphics.galaxyDustCount
     const radius = 72
     const branches = 4
     const spin = 1.35
@@ -70,7 +76,7 @@ function Galaxy() {
     }
 
     return { positions, colors, dustPositions, dustColors }
-  }, [])
+  }, [graphics.galaxyCount, graphics.galaxyDustCount])
 
   useFrame((_, delta) => {
     if (pointsRef.current) {
@@ -178,8 +184,11 @@ function seededRandom(seed) {
   }
 }
 
-function makeNebulaTexture(seed, pixelated = false) {
-  const size = pixelated ? 512 : 1024
+function makeNebulaTexture(seed, pixelated = false, detail = {}) {
+  const baseSize = pixelated ? Math.min(detail.textureSize || 512, 512) : (detail.textureSize || 1024)
+  const size = baseSize
+  const blobCount = detail.blobCount || 34
+  const particleCount = detail.particleCount || (pixelated ? 9000 : 15000)
   const canvas = document.createElement('canvas')
   canvas.width = size
   canvas.height = size
@@ -192,7 +201,7 @@ function makeNebulaTexture(seed, pixelated = false) {
   ctx.clearRect(0, 0, size, size)
   ctx.globalCompositeOperation = 'lighter'
 
-  for (let i = 0; i < 34; i++) {
+  for (let i = 0; i < blobCount; i++) {
     const x = size * (0.25 + rand() * 0.55)
     const y = size * (0.22 + rand() * 0.58)
     const r = size * (0.16 + rand() * 0.28)
@@ -207,7 +216,7 @@ function makeNebulaTexture(seed, pixelated = false) {
 
   const centerX = size * (0.42 + (rand() - 0.5) * 0.16)
   const centerY = size * (0.48 + (rand() - 0.5) * 0.12)
-  const particles = pixelated ? 9000 : 15000
+  const particles = particleCount
   for (let i = 0; i < particles; i++) {
     const r = Math.pow(rand(), 0.58) * size * 0.52
     const branch = (i % 3) * (Math.PI * 2 / 3)
@@ -260,7 +269,8 @@ function makeNebulaTexture(seed, pixelated = false) {
   return tex
 }
 
-function DeepSpaceStars() {
+function DeepSpaceStars({ graphics: graphicsProp } = {}) {
+  const graphics = resolveGraphics(graphicsProp)
   const starTex = useMemo(() => makeStarTexture(), [])
   const nearRef = useRef()
   const farRef = useRef()
@@ -295,10 +305,10 @@ function DeepSpaceStars() {
     }
 
     return {
-      near: makeShell(1800, 38, 85, '#718cff', '#fff3dc'),
-      far: makeShell(5200, 90, 165, '#243d96', '#8aa9ff'),
+      near: makeShell(graphics.starNearCount, 38, 85, '#718cff', '#fff3dc'),
+      far: makeShell(graphics.starFarCount, 90, 165, '#243d96', '#8aa9ff'),
     }
-  }, [])
+  }, [graphics.starNearCount, graphics.starFarCount])
 
   useFrame((_, delta) => {
     if (nearRef.current) nearRef.current.rotation.y += delta * 0.004
@@ -345,8 +355,16 @@ function DeepSpaceStars() {
   )
 }
 
-function NebulaLayer({ seed, pixelated, position, scale, opacity, rotation = 0 }) {
-  const texture = useMemo(() => makeNebulaTexture(seed, pixelated), [seed, pixelated])
+function NebulaLayer({ seed, pixelated, graphics: graphicsProp, position, scale, opacity, rotation = 0 }) {
+  const graphics = resolveGraphics(graphicsProp)
+  const texture = useMemo(
+    () => makeNebulaTexture(seed, pixelated, {
+      textureSize: graphics.nebulaTextureSize,
+      blobCount: graphics.nebulaBlobCount,
+      particleCount: graphics.nebulaParticleCount,
+    }),
+    [seed, pixelated, graphics.nebulaTextureSize, graphics.nebulaBlobCount, graphics.nebulaParticleCount],
+  )
 
   return (
     <sprite position={position} scale={scale}>
@@ -362,7 +380,8 @@ function NebulaLayer({ seed, pixelated, position, scale, opacity, rotation = 0 }
   )
 }
 
-function RealisticGalaxy() {
+function RealisticGalaxy({ graphics: graphicsProp } = {}) {
+  const graphics = resolveGraphics(graphicsProp)
   const starTex = useMemo(() => makeStarTexture(), [])
   const glowTex = useMemo(() => makeGlowTexture(), [])
   const coreRef = useRef()
@@ -375,7 +394,7 @@ function RealisticGalaxy() {
     const radius = 72
 
     // ---- Core (dense bright bulge) ----
-    const coreCount = 4200
+    const coreCount = graphics.realisticCore
     const corePos = new Float32Array(coreCount * 3)
     const coreCol = new Float32Array(coreCount * 3)
     const coreWhite = new THREE.Color('#fff8e8')
@@ -395,7 +414,7 @@ function RealisticGalaxy() {
     }
 
     // ---- Spiral arms ----
-    const armCount = 19000
+    const armCount = graphics.realisticArms
     const armPos = new Float32Array(armCount * 3)
     const armCol = new Float32Array(armCount * 3)
     const branches = 2
@@ -447,7 +466,7 @@ function RealisticGalaxy() {
     }
 
     // ---- Halo (diffuse outer stars) ----
-    const haloCount = 6500
+    const haloCount = graphics.realisticHalo
     const haloPos = new Float32Array(haloCount * 3)
     const haloCol = new Float32Array(haloCount * 3)
     const haloBlue = new THREE.Color('#4a6aff')
@@ -467,7 +486,7 @@ function RealisticGalaxy() {
     }
 
     // ---- Faint volumetric dust clouds between arm and halo layers ----
-    const dustCount = 4200
+    const dustCount = graphics.realisticDust
     const dustPos = new Float32Array(dustCount * 3)
     const dustCol = new Float32Array(dustCount * 3)
     const dustBlue = new THREE.Color('#5e83ff')
@@ -490,7 +509,7 @@ function RealisticGalaxy() {
     }
 
     // ---- Very distant star field behind the main galaxy ----
-    const farCount = 5000
+    const farCount = graphics.realisticFar
     const farPos = new Float32Array(farCount * 3)
     const farCol = new Float32Array(farCount * 3)
     const farBlue = new THREE.Color('#8fb8ff')
@@ -516,7 +535,13 @@ function RealisticGalaxy() {
       dust: { pos: dustPos, col: dustCol, count: dustCount },
       far: { pos: farPos, col: farCol, count: farCount },
     }
-  }, [])
+  }, [
+    graphics.realisticCore,
+    graphics.realisticArms,
+    graphics.realisticHalo,
+    graphics.realisticDust,
+    graphics.realisticFar,
+  ])
 
   useFrame((_, delta) => {
     if (coreRef.current) coreRef.current.rotation.y += delta * 0.015

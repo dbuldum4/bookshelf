@@ -139,6 +139,17 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook, onRepl
     if (tagFilter !== 'All' && !tagOptions.includes(tagFilter)) setTagFilter('All')
   }, [tagFilter, tagOptions])
 
+  // Keep keyboard focus on the selected library row when arrows change selection.
+  useEffect(() => {
+    if (!selectedBookId) return
+    const active = document.activeElement
+    if (!(active instanceof HTMLElement)) return
+    if (active.getAttribute('role') !== 'option') return
+    if (!active.closest('[role="listbox"][aria-label="Library books"]')) return
+    const next = document.getElementById(`library-book-${selectedBookId}`)
+    if (next instanceof HTMLElement && next !== active) next.focus()
+  }, [selectedBookId])
+
   const visibleBooks = useMemo(() => {
     const search = query.trim().toLowerCase()
     return library.filter((book) => {
@@ -582,12 +593,28 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook, onRepl
         </form>
       )}
 
-      <div style={{ overflowY: 'auto', padding: '0 10px 10px' }}>
+      <div
+        role="listbox"
+        aria-label="Library books"
+        aria-activedescendant={selectedBookId ? `library-book-${selectedBookId}` : undefined}
+        style={{ overflowY: 'auto', padding: '0 10px 10px' }}
+      >
         {visibleBooks.map((book) => {
           const selected = book.id === selectedBookId
+          const label = [
+            book.title,
+            book.author ? `by ${book.author}` : '',
+            book.status,
+            selected ? 'selected' : '',
+          ].filter(Boolean).join(', ')
           return (
             <button
               type="button"
+              id={`library-book-${book.id}`}
+              role="option"
+              aria-selected={selected}
+              aria-label={label}
+              tabIndex={selected || (!selectedBookId && book.id === visibleBooks[0]?.id) ? 0 : -1}
               key={book.id}
               onClick={() => onSelectBook(book.id)}
               style={{
@@ -609,7 +636,7 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook, onRepl
               ) : (
                 <span aria-hidden="true" style={{ width: 28, height: 40, flexShrink: 0, borderRadius: 3, background: book.color, boxShadow: `inset -4px 0 rgba(0,0,0,0.25)` }} />
               )}
-              <span style={{ minWidth: 0, flex: 1 }}>
+              <span style={{ minWidth: 0, flex: 1 }} aria-hidden="true">
                 <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13, fontWeight: 700 }}>{book.title}</span>
                 <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2, color: 'rgba(255,255,255,0.52)', fontSize: 11 }}>
                   {book.author}
@@ -617,7 +644,7 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook, onRepl
                   {(book.quotes || []).length ? ` · ${book.quotes.length} quote${book.quotes.length === 1 ? '' : 's'}` : ''}
                 </span>
               </span>
-              <span style={{ maxWidth: 78, color: selected ? '#fff' : 'rgba(255,255,255,0.48)', fontSize: 10, textAlign: 'right' }}>{progressLabel(book)}</span>
+              <span aria-hidden="true" style={{ maxWidth: 78, color: selected ? '#fff' : 'rgba(255,255,255,0.48)', fontSize: 10, textAlign: 'right' }}>{progressLabel(book)}</span>
             </button>
           )
         })}

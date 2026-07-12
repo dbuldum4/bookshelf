@@ -47,7 +47,10 @@ function BookDetails({ book, onUpdate, onDelete, onClose }) {
 
   return (
     <aside
+      role="dialog"
+      aria-modal="false"
       aria-label={`Details for ${book.title}`}
+      data-book-editor
       style={{
         position: 'absolute',
         top: 76,
