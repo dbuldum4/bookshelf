@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import { lookupBookByIsbn, READING_STATUSES } from '../library'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { lookupBookByIsbn, READING_STATUSES, searchAcclaimedBooks } from '../library'
 
 const fontFamily =
   '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif'
@@ -60,6 +60,12 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook }) {
   const [draft, setDraft] = useState({ title: '', author: '', isbn: '', pageCount: '', coverUrl: '' })
   const [lookupError, setLookupError] = useState('')
   const [lookingUp, setLookingUp] = useState(false)
+  const [showSuggestions, setShowSuggestions] = useState(false)
+  const [activeSuggestion, setActiveSuggestion] = useState(0)
+  const [suggestions, setSuggestions] = useState([])
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false)
+  const [suggestionError, setSuggestionError] = useState('')
+  const blurTimer = useRef(null)
 
   const stats = useMemo(() => READING_STATUSES.map((value) => ({
     label: value,
@@ -76,7 +82,90 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook }) {
     })
   }, [library, query, status])
 
+  useEffect(() => {
+    const search = draft.title.trim()
+    if (search.length < 2 || !showSuggestions) {
+      setSuggestions([])
+      setLoadingSuggestions(false)
+      setSuggestionError('')
+      return undefined
+    }
+
+    const controller = new AbortController()
+    setSuggestions([])
+    setLoadingSuggestions(true)
+    setSuggestionError('')
+    const timer = window.setTimeout(async () => {
+      try {
+        const results = await searchAcclaimedBooks(search, controller.signal)
+        if (controller.signal.aborted) return
+        setSuggestions(results)
+        setActiveSuggestion(0)
+      } catch (error) {
+        if (error?.name !== 'AbortError' && !controller.signal.aborted) {
+          setSuggestions([])
+          setSuggestionError(error instanceof Error ? error.message : 'Book suggestions are unavailable right now.')
+        }
+      } finally {
+        if (!controller.signal.aborted) setLoadingSuggestions(false)
+      }
+    }, 250)
+
+    return () => {
+      window.clearTimeout(timer)
+      controller.abort()
+    }
+  }, [draft.title, showSuggestions])
+
+  useEffect(() => () => {
+    if (blurTimer.current !== null) window.clearTimeout(blurTimer.current)
+  }, [])
+
   const changeDraft = (field, value) => setDraft((current) => ({ ...current, [field]: value }))
+
+  const chooseSuggestion = (book) => {
+    setDraft((current) => ({
+      ...current,
+      title: book.title,
+      author: book.author,
+      coverUrl: book.coverUrl,
+    }))
+    setShowSuggestions(false)
+    setSuggestionError('')
+    setActiveSuggestion(0)
+  }
+
+  const handleTitleKeyDown = (event) => {
+    if (!showSuggestions || loadingSuggestions || !suggestions.length) return
+    if (event.key === 'ArrowDown') {
+      event.preventDefault()
+      setActiveSuggestion((index) => (index + 1) % suggestions.length)
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault()
+      setActiveSuggestion((index) => (index - 1 + suggestions.length) % suggestions.length)
+    } else if (event.key === 'Enter') {
+      event.preventDefault()
+      chooseSuggestion(suggestions[activeSuggestion])
+    } else if (event.key === 'Escape') {
+      setShowSuggestions(false)
+    }
+  }
+
+  const focusTitle = () => {
+    if (blurTimer.current !== null) {
+      window.clearTimeout(blurTimer.current)
+      blurTimer.current = null
+    }
+    setShowSuggestions(true)
+  }
+
+  const blurTitle = () => {
+    if (blurTimer.current !== null) window.clearTimeout(blurTimer.current)
+    blurTimer.current = window.setTimeout(() => {
+      setShowSuggestions(false)
+      blurTimer.current = null
+    }, 100)
+  }
 
   const findByIsbn = async () => {
     setLookingUp(true)
@@ -165,7 +254,94 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook }) {
       {adding && (
         <form onSubmit={submit} style={{ borderTop: '1px solid rgba(255,255,255,0.1)', padding: 16, background: 'rgba(255,255,255,0.025)' }}>
           <div style={{ display: 'grid', gap: 8 }}>
-            <input required value={draft.title} onChange={(event) => changeDraft('title', event.target.value)} placeholder="Title" aria-label="Book title" style={inputStyle} />
+            <div style={{ position: 'relative' }}>
+              <input
+                required
+                role="combobox"
+                aria-autocomplete="list"
+                aria-controls="acclaimed-book-suggestions"
+                aria-haspopup="listbox"
+                aria-expanded={showSuggestions && (loadingSuggestions || Boolean(suggestionError) || suggestions.length > 0)}
+                aria-activedescendant={showSuggestions && !loadingSuggestions && suggestions.length ? `book-suggestion-${suggestions[activeSuggestion].id}` : undefined}
+                value={draft.title}
+                onChange={(event) => {
+                  changeDraft('title', event.target.value)
+                  setSuggestions([])
+                  setLoadingSuggestions(event.target.value.trim().length >= 2)
+                  setSuggestionError('')
+                  setShowSuggestions(true)
+                  setActiveSuggestion(0)
+                }}
+                onFocus={focusTitle}
+                onBlur={blurTitle}
+                onKeyDown={handleTitleKeyDown}
+                placeholder="Title"
+                aria-label="Book title"
+                autoComplete="off"
+                style={inputStyle}
+              />
+              {showSuggestions && (loadingSuggestions || Boolean(suggestionError) || suggestions.length > 0) && (
+                <div
+                  id="acclaimed-book-suggestions"
+                  role="listbox"
+                  aria-busy={loadingSuggestions}
+                  aria-label="Acclaimed book suggestions"
+                  style={{
+                    position: 'absolute',
+                    zIndex: 2,
+                    top: 40,
+                    left: 0,
+                    right: 0,
+                    maxHeight: 'clamp(96px, calc(100vh - 330px), 232px)',
+                    overflowX: 'hidden',
+                    overflowY: 'auto',
+                    border: '1px solid rgba(255,255,255,0.15)',
+                    borderRadius: 10,
+                    background: 'rgba(24, 22, 42, 0.98)',
+                    boxShadow: '0 14px 32px rgba(0,0,0,0.42)',
+                  }}
+                >
+                  {loadingSuggestions && (
+                    <div role="option" aria-disabled="true" style={{ padding: '9px 10px', color: 'rgba(255,255,255,0.55)', fontSize: 11 }}>Finding acclaimed books…</div>
+                  )}
+                  {!loadingSuggestions && suggestionError && (
+                    <div role="option" aria-disabled="true" aria-live="assertive" style={{ padding: '9px 10px', color: '#ffb4b4', fontSize: 11 }}>{suggestionError}</div>
+                  )}
+                  {!loadingSuggestions && suggestions.map((book, index) => (
+                    <button
+                      id={`book-suggestion-${book.id}`}
+                      role="option"
+                      aria-selected={index === activeSuggestion}
+                      type="button"
+                      key={book.id}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onMouseEnter={() => setActiveSuggestion(index)}
+                      onClick={() => chooseSuggestion(book)}
+                      style={{
+                        width: '100%',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 9,
+                        border: 0,
+                        color: '#fff',
+                        background: index === activeSuggestion ? 'rgba(155, 119, 246, 0.24)' : 'transparent',
+                        padding: '8px 10px',
+                        textAlign: 'left',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <span style={{ width: 22, color: 'rgba(201, 180, 255, 0.75)', fontSize: 10, fontWeight: 700 }}>#{book.acclaimRank}</span>
+                      <span style={{ minWidth: 0 }}>
+                        <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, fontWeight: 700 }}>{book.title}</span>
+                        <span style={{ display: 'block', marginTop: 1, color: 'rgba(255,255,255,0.5)', fontSize: 10 }}>
+                          {[book.author, book.firstPublishYear || '', book.rating ? `${book.rating.toFixed(1)} ★` : ''].filter(Boolean).join(' · ')}
+                        </span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             <input value={draft.author} onChange={(event) => changeDraft('author', event.target.value)} placeholder="Author" aria-label="Book author" style={inputStyle} />
             <div style={{ display: 'flex', gap: 8 }}>
               <input value={draft.isbn} onChange={(event) => changeDraft('isbn', event.target.value)} placeholder="ISBN (optional)" aria-label="ISBN" style={inputStyle} />

@@ -220,6 +220,42 @@ export async function lookupBookByIsbn(value) {
   }
 }
 
+export async function searchAcclaimedBooks(value, signal) {
+  const query = String(value || '').trim()
+  if (query.length < 2) return []
+
+  const params = new URLSearchParams({
+    q: query,
+    fields: 'key,title,author_name,cover_i,first_publish_year,ratings_average,ratings_count',
+    limit: '20',
+  })
+  const response = await fetch(`https://openlibrary.org/search.json?${params}`, { signal })
+  if (!response.ok) throw new Error('Book suggestions are unavailable right now.')
+
+  const data = await response.json()
+  return (Array.isArray(data.docs) ? data.docs : [])
+    .map((book, relevanceRank) => {
+      const rating = Number(book.ratings_average) || 0
+      const ratingsCount = asNumber(book.ratings_count)
+      return {
+        id: typeof book.key === 'string' ? book.key.replaceAll('/', '-') : `suggestion-${relevanceRank}`,
+        title: typeof book.title === 'string' ? book.title : 'Untitled book',
+        author: Array.isArray(book.author_name) ? book.author_name.filter(Boolean).join(', ') : '',
+        firstPublishYear: asNumber(book.first_publish_year),
+        rating,
+        ratingsCount,
+        coverUrl: Number.isInteger(book.cover_i) && book.cover_i > 0
+          ? `https://covers.openlibrary.org/b/id/${book.cover_i}-M.jpg`
+          : '',
+        acclaimScore: rating * Math.log10(ratingsCount + 1),
+        relevanceRank,
+      }
+    })
+    .sort((a, b) => b.acclaimScore - a.acclaimScore || a.relevanceRank - b.relevanceRank)
+    .slice(0, 8)
+    .map((book, index) => ({ ...book, acclaimRank: index + 1 }))
+}
+
 function bookRandom(index, salt) {
   const value = Math.sin((index + 1) * 91.345 + salt * 17.123) * 43758.5453
   return value - Math.floor(value)
