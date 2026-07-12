@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { lookupBookByIsbn, READING_STATUSES, searchAcclaimedBooks } from '../library'
 
 const fontFamily =
@@ -64,6 +64,8 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook }) {
   const [activeSuggestion, setActiveSuggestion] = useState(0)
   const [suggestions, setSuggestions] = useState([])
   const [loadingSuggestions, setLoadingSuggestions] = useState(false)
+  const [suggestionError, setSuggestionError] = useState('')
+  const blurTimer = useRef(null)
 
   const stats = useMemo(() => READING_STATUSES.map((value) => ({
     label: value,
@@ -85,17 +87,25 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook }) {
     if (search.length < 2 || !showSuggestions) {
       setSuggestions([])
       setLoadingSuggestions(false)
+      setSuggestionError('')
       return undefined
     }
 
     const controller = new AbortController()
+    setSuggestions([])
     setLoadingSuggestions(true)
+    setSuggestionError('')
     const timer = window.setTimeout(async () => {
       try {
-        setSuggestions(await searchAcclaimedBooks(search, controller.signal))
+        const results = await searchAcclaimedBooks(search, controller.signal)
+        if (controller.signal.aborted) return
+        setSuggestions(results)
         setActiveSuggestion(0)
       } catch (error) {
-        if (error?.name !== 'AbortError') setSuggestions([])
+        if (error?.name !== 'AbortError' && !controller.signal.aborted) {
+          setSuggestions([])
+          setSuggestionError(error instanceof Error ? error.message : 'Book suggestions are unavailable right now.')
+        }
       } finally {
         if (!controller.signal.aborted) setLoadingSuggestions(false)
       }
@@ -107,6 +117,10 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook }) {
     }
   }, [draft.title, showSuggestions])
 
+  useEffect(() => () => {
+    if (blurTimer.current !== null) window.clearTimeout(blurTimer.current)
+  }, [])
+
   const changeDraft = (field, value) => setDraft((current) => ({ ...current, [field]: value }))
 
   const chooseSuggestion = (book) => {
@@ -117,11 +131,12 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook }) {
       coverUrl: book.coverUrl,
     }))
     setShowSuggestions(false)
+    setSuggestionError('')
     setActiveSuggestion(0)
   }
 
   const handleTitleKeyDown = (event) => {
-    if (!showSuggestions || !suggestions.length) return
+    if (!showSuggestions || loadingSuggestions || !suggestions.length) return
     if (event.key === 'ArrowDown') {
       event.preventDefault()
       setActiveSuggestion((index) => (index + 1) % suggestions.length)
@@ -134,6 +149,22 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook }) {
     } else if (event.key === 'Escape') {
       setShowSuggestions(false)
     }
+  }
+
+  const focusTitle = () => {
+    if (blurTimer.current !== null) {
+      window.clearTimeout(blurTimer.current)
+      blurTimer.current = null
+    }
+    setShowSuggestions(true)
+  }
+
+  const blurTitle = () => {
+    if (blurTimer.current !== null) window.clearTimeout(blurTimer.current)
+    blurTimer.current = window.setTimeout(() => {
+      setShowSuggestions(false)
+      blurTimer.current = null
+    }, 100)
   }
 
   const findByIsbn = async () => {
@@ -229,26 +260,31 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook }) {
                 role="combobox"
                 aria-autocomplete="list"
                 aria-controls="acclaimed-book-suggestions"
-                aria-expanded={showSuggestions && suggestions.length > 0}
-                aria-activedescendant={showSuggestions && suggestions.length ? `book-suggestion-${suggestions[activeSuggestion].id}` : undefined}
+                aria-haspopup="listbox"
+                aria-expanded={showSuggestions && (loadingSuggestions || Boolean(suggestionError) || suggestions.length > 0)}
+                aria-activedescendant={showSuggestions && !loadingSuggestions && suggestions.length ? `book-suggestion-${suggestions[activeSuggestion].id}` : undefined}
                 value={draft.title}
                 onChange={(event) => {
                   changeDraft('title', event.target.value)
+                  setSuggestions([])
+                  setLoadingSuggestions(event.target.value.trim().length >= 2)
+                  setSuggestionError('')
                   setShowSuggestions(true)
                   setActiveSuggestion(0)
                 }}
-                onFocus={() => setShowSuggestions(true)}
-                onBlur={() => window.setTimeout(() => setShowSuggestions(false), 100)}
+                onFocus={focusTitle}
+                onBlur={blurTitle}
                 onKeyDown={handleTitleKeyDown}
                 placeholder="Title"
                 aria-label="Book title"
                 autoComplete="off"
                 style={inputStyle}
               />
-              {showSuggestions && (loadingSuggestions || suggestions.length > 0) && (
+              {showSuggestions && (loadingSuggestions || Boolean(suggestionError) || suggestions.length > 0) && (
                 <div
                   id="acclaimed-book-suggestions"
                   role="listbox"
+                  aria-busy={loadingSuggestions}
                   aria-label="Acclaimed book suggestions"
                   style={{
                     position: 'absolute',
@@ -256,7 +292,9 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook }) {
                     top: 40,
                     left: 0,
                     right: 0,
-                    overflow: 'hidden',
+                    maxHeight: 'clamp(96px, calc(100vh - 330px), 232px)',
+                    overflowX: 'hidden',
+                    overflowY: 'auto',
                     border: '1px solid rgba(255,255,255,0.15)',
                     borderRadius: 10,
                     background: 'rgba(24, 22, 42, 0.98)',
@@ -264,7 +302,10 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook }) {
                   }}
                 >
                   {loadingSuggestions && (
-                    <div style={{ padding: '9px 10px', color: 'rgba(255,255,255,0.55)', fontSize: 11 }}>Finding acclaimed books…</div>
+                    <div role="option" aria-disabled="true" style={{ padding: '9px 10px', color: 'rgba(255,255,255,0.55)', fontSize: 11 }}>Finding acclaimed books…</div>
+                  )}
+                  {!loadingSuggestions && suggestionError && (
+                    <div role="option" aria-disabled="true" aria-live="assertive" style={{ padding: '9px 10px', color: '#ffb4b4', fontSize: 11 }}>{suggestionError}</div>
                   )}
                   {!loadingSuggestions && suggestions.map((book, index) => (
                     <button
