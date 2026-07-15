@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Canvas } from '@react-three/fiber'
+import { Canvas, useThree } from '@react-three/fiber'
 import BookDetails from './components/BookDetails'
 import Controls from './components/Controls'
 import LibraryPanel from './components/LibraryPanel'
@@ -59,6 +59,23 @@ function shouldIgnoreBookNavigation(event) {
   if (isTypingTarget(target)) return true
   if (isModalOrEditorTarget(target)) return true
   return false
+}
+
+function WebGLContextLossHandler({ onContextLost }) {
+  const gl = useThree((state) => state.gl)
+
+  useEffect(() => {
+    const canvas = gl.domElement
+    const handleContextLost = (event) => {
+      event.preventDefault()
+      onContextLost()
+    }
+
+    canvas.addEventListener('webglcontextlost', handleContextLost)
+    return () => canvas.removeEventListener('webglcontextlost', handleContextLost)
+  }, [gl, onContextLost])
+
+  return null
 }
 
 export default function App() {
@@ -242,6 +259,10 @@ export default function App() {
     setWebGLAvailable(isWebGLAvailable())
   }
 
+  const handleWebGLContextLost = useCallback(() => {
+    setWebGLAvailable(false)
+  }, [])
+
   return (
     <div
       data-reduced-motion={reducedMotion ? 'true' : 'false'}
@@ -256,10 +277,6 @@ export default function App() {
           gl={{ antialias: graphics.antialias }}
           onCreated={({ gl }) => {
             const canvas = gl.domElement
-            canvas.addEventListener('webglcontextlost', (event) => {
-              event.preventDefault()
-              setWebGLAvailable(false)
-            }, { once: true })
             canvas.tabIndex = 0
             canvas.setAttribute('role', 'application')
             canvas.setAttribute(
@@ -268,6 +285,7 @@ export default function App() {
             )
           }}
         >
+          <WebGLContextLossHandler onContextLost={handleWebGLContextLost} />
           <Scene
             mode={mode}
             resetKey={resetKey}
