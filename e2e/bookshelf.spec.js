@@ -35,8 +35,6 @@ test('switches between view modes', async ({ page }) => {
 })
 
 test('switches graphics quality without showing the WebGL fallback', async ({ page }) => {
-  await page.getByRole('button', { name: 'Controls', exact: true }).click()
-
   for (const quality of ['Low', 'High', 'Medium']) {
     const button = page.getByRole('button', { name: `${quality} graphics quality` })
     await button.click()
