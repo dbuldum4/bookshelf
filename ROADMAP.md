@@ -14,7 +14,7 @@ The strongest next step is turning the visual demo into a bookshelf people can g
 - [x] Add author, tag, and rating filters plus favorite quotes.
 - [x] Add reduced-motion, graphics-quality, keyboard navigation, focus, and mobile control options.
 - [x] Add accessibility and performance controls, automated tests, and resilient fallbacks.
-- [ ] Add CI/CD and release infrastructure.
+- [x] Add CI/CD and release infrastructure.
 
 ## Priorities
 
@@ -48,11 +48,11 @@ The strongest next step is turning the visual demo into a bookshelf people can g
 6. **Engineering foundations**
    - Completed: tests for persistence and shelf layout.
    - Completed: browser smoke tests for selecting, editing, and mode switching.
-   - GitHub Actions for lint, tests, and build.
+   - Completed: GitHub Actions for lint, unit tests, browser smoke tests, and production builds.
    - Completed: an error boundary and a WebGL-unavailable fallback.
 
 7. **Presentation polish**
-   - Live demo deployment.
+   - Completed: deploy successful `main` builds to GitHub Pages.
    - Screenshots or a short GIF in the README.
    - License, contribution guide, and roadmap.
 

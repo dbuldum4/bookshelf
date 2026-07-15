@@ -1,5 +1,9 @@
 # Bookshelf
 
+[![CI and Pages](https://github.com/dbuldum4/bookshelf/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/dbuldum4/bookshelf/actions/workflows/ci-cd.yml)
+
+[View the live bookshelf](https://dbuldum4.github.io/bookshelf/)
+
 A procedural 3D bookshelf scene built with React, Vite, Three.js, and Rapier physics. The app renders a wood-grain bookshelf suspended in space, with generated book spines, switchable galaxy backdrops, camera modes, and an interactive physics play mode.
 
 ## Features
@@ -94,3 +98,5 @@ public/
 - The visual assets are generated at runtime with canvas textures and Three.js geometry.
 - Physics is only enabled in Play mode; the default viewing modes keep the bookshelf in a lightweight floating scene.
 - The app is designed for a full-window canvas experience.
+- The app requires no credentials. Open Library requests use public endpoints, and personal library data remains in browser-local storage.
+- Never commit environment files. Values prefixed with `VITE_` are bundled into browser code and must not contain secrets.
