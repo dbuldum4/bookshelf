@@ -41,6 +41,12 @@ Install dependencies:
 bun install
 ```
 
+Install Chromium once before running the browser smoke tests:
+
+```bash
+bunx playwright install chromium
+```
+
 Start the development server:
 
 ```bash
@@ -56,6 +62,8 @@ bun run dev      # Start Vite in development mode
 bun run build    # Create a production build in dist/
 bun run preview  # Preview the production build locally
 bun run lint     # Run oxlint
+bun run test     # Run unit tests
+bun run test:e2e # Run Playwright browser smoke tests
 ```
 
 ## Project Structure
@@ -66,7 +74,11 @@ src/
   components/
     Controls.jsx          # Camera, galaxy, and play-mode controls
     BookDetails.jsx       # Selected-book metadata, status, and notes
+    ErrorBoundary.jsx     # Recoverable application error screen
+    WebGLFallback.jsx     # Non-3D library experience when WebGL is unavailable
   library.js              # Book catalog, shelf layout, and local persistence
+  library.test.js         # Persistence and shelf-layout unit tests
+  webgl.js                # WebGL capability detection
   scene/
     Bookshelf.jsx         # Procedural books, wood, and physics interactions
     CameraRig.jsx         # Fixed, rotating, and custom camera behavior

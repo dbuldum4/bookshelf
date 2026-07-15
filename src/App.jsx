@@ -3,6 +3,7 @@ import { Canvas } from '@react-three/fiber'
 import BookDetails from './components/BookDetails'
 import Controls from './components/Controls'
 import LibraryPanel from './components/LibraryPanel'
+import WebGLFallback from './components/WebGLFallback'
 import {
   DEFAULT_GRAPHICS_QUALITY,
   getGraphicsPreset,
@@ -11,6 +12,7 @@ import {
 } from './graphicsQuality'
 import { createBook, loadLibrary, saveLibrary } from './library'
 import Scene from './scene/Scene'
+import { isWebGLAvailable } from './webgl'
 
 const BOOKS_PER_SHELF_VIEW = 40
 const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)'
@@ -60,6 +62,7 @@ function shouldIgnoreBookNavigation(event) {
 }
 
 export default function App() {
+  const [webGLAvailable, setWebGLAvailable] = useState(isWebGLAvailable)
   const [mode, setMode] = useState('fixed')
   const [resetKey, setResetKey] = useState(0)
   const [galaxyMode, setGalaxyMode] = useState('realistic')
@@ -235,57 +238,71 @@ export default function App() {
     setShelfPage(0)
   }
 
+  const retryWebGL = () => {
+    setWebGLAvailable(isWebGLAvailable())
+  }
+
   return (
     <div
       data-reduced-motion={reducedMotion ? 'true' : 'false'}
       style={{ width: '100vw', height: '100vh', background: '#05010f' }}
     >
-      <Canvas
-        key={graphicsQuality}
-        shadows={graphics.shadows}
-        camera={{ position: [0, 2, 13], fov: 45 }}
-        dpr={graphics.dpr}
-        gl={{ antialias: graphics.antialias }}
-        onCreated={({ gl }) => {
-          const canvas = gl.domElement
-          canvas.tabIndex = 0
-          canvas.setAttribute('role', 'application')
-          canvas.setAttribute(
-            'aria-label',
-            '3D bookshelf. Use Left and Right arrow keys to move between books, Home and End to jump to the first or last book, and Escape to clear the selection.',
-          )
-        }}
-      >
-        <Scene
-          mode={mode}
-          resetKey={resetKey}
-          galaxyMode={galaxyMode}
-          graphics={graphics}
-          reducedMotion={reducedMotion}
-          library={visibleLibrary}
-          selectedBookId={selectedBookId}
-          onSelectBook={selectBook}
-        />
-      </Canvas>
+      {webGLAvailable ? (
+        <Canvas
+          key={graphicsQuality}
+          shadows={graphics.shadows}
+          camera={{ position: [0, 2, 13], fov: 45 }}
+          dpr={graphics.dpr}
+          gl={{ antialias: graphics.antialias }}
+          onCreated={({ gl }) => {
+            const canvas = gl.domElement
+            canvas.addEventListener('webglcontextlost', (event) => {
+              event.preventDefault()
+              setWebGLAvailable(false)
+            }, { once: true })
+            canvas.tabIndex = 0
+            canvas.setAttribute('role', 'application')
+            canvas.setAttribute(
+              'aria-label',
+              '3D bookshelf. Use Left and Right arrow keys to move between books, Home and End to jump to the first or last book, and Escape to clear the selection.',
+            )
+          }}
+        >
+          <Scene
+            mode={mode}
+            resetKey={resetKey}
+            galaxyMode={galaxyMode}
+            graphics={graphics}
+            reducedMotion={reducedMotion}
+            library={visibleLibrary}
+            selectedBookId={selectedBookId}
+            onSelectBook={selectBook}
+          />
+        </Canvas>
+      ) : (
+        <WebGLFallback onRetry={retryWebGL} />
+      )}
 
       <div className="sr-only" aria-live="polite" aria-atomic="true">
         {selectionAnnouncement}
       </div>
 
-      <Controls
-        mode={mode}
-        setMode={setMode}
-        galaxyMode={galaxyMode}
-        setGalaxyMode={setGalaxyMode}
-        graphicsQuality={graphicsQuality}
-        setGraphicsQuality={setGraphicsQuality}
-        reducedMotion={reducedMotion}
-        setReducedMotion={setReducedMotionPreference}
-        onReset={() => setResetKey((key) => key + 1)}
-        shelfPage={shelfPage}
-        shelfPageCount={shelfPageCount}
-        setShelfPage={setShelfPage}
-      />
+      {webGLAvailable && (
+        <Controls
+          mode={mode}
+          setMode={setMode}
+          galaxyMode={galaxyMode}
+          setGalaxyMode={setGalaxyMode}
+          graphicsQuality={graphicsQuality}
+          setGraphicsQuality={setGraphicsQuality}
+          reducedMotion={reducedMotion}
+          setReducedMotion={setReducedMotionPreference}
+          onReset={() => setResetKey((key) => key + 1)}
+          shelfPage={shelfPage}
+          shelfPageCount={shelfPageCount}
+          setShelfPage={setShelfPage}
+        />
+      )}
       <LibraryPanel
         library={library}
         selectedBookId={selectedBookId}
