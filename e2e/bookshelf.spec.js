@@ -33,3 +33,12 @@ test('switches between view modes', async ({ page }) => {
   await expect(customize).toHaveAttribute('aria-pressed', 'true')
   await expect(page.getByText('Drag a book to grab it — release to fling')).toBeHidden()
 })
+
+test('switches graphics quality without showing the WebGL fallback', async ({ page }) => {
+  for (const quality of ['Low', 'High', 'Medium']) {
+    const button = page.getByRole('button', { name: `${quality} graphics quality` })
+    await button.click()
+    await expect(button).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.getByRole('heading', { name: '3D graphics are unavailable' })).toBeHidden()
+  }
+})
