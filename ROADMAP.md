@@ -13,7 +13,8 @@ The strongest next step is turning the visual demo into a bookshelf people can g
 - [x] Import and export library data as JSON.
 - [x] Add author, tag, and rating filters plus favorite quotes.
 - [x] Add reduced-motion, graphics-quality, keyboard navigation, focus, and mobile control options.
-- [ ] Add accessibility, performance, testing, fallback, and release infrastructure.
+- [x] Add accessibility and performance controls, automated tests, and resilient fallbacks.
+- [ ] Add CI/CD and release infrastructure.
 
 ## Priorities
 
@@ -45,10 +46,10 @@ The strongest next step is turning the visual demo into a bookshelf people can g
    - Completed: mobile-friendly collapsed controls.
 
 6. **Engineering foundations**
-   - Tests for persistence and shelf layout.
-   - Browser smoke tests for selecting, editing, and mode switching.
+   - Completed: tests for persistence and shelf layout.
+   - Completed: browser smoke tests for selecting, editing, and mode switching.
    - GitHub Actions for lint, tests, and build.
-   - An error boundary and a WebGL-unavailable fallback.
+   - Completed: an error boundary and a WebGL-unavailable fallback.
 
 7. **Presentation polish**
    - Live demo deployment.
