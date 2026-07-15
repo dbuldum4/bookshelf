@@ -83,6 +83,7 @@ function Controls({
               <button
                 type="button"
                 key={value}
+                aria-pressed={mode === value}
                 onClick={() => setMode(value)}
                 style={controlButtonStyle(mode === value, reducedMotion)}
               >
