@@ -36,6 +36,9 @@ jobs:
       - name: Run unit tests
         run: bun run test
 
+      - name: Validate GitHub Pages build
+        run: bunx vite build --base=/bookshelf/
+
       - name: Install Chromium
         run: bunx playwright install --with-deps chromium
 
