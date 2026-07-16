@@ -63,7 +63,7 @@ style.textContent = `
     position: absolute;
     top: 16px;
     left: 16px;
-    right: 16px;
+    right: 120px;
     z-index: 20;
     display: flex;
     flex-direction: column;
@@ -71,6 +71,10 @@ style.textContent = `
     gap: 10px;
     pointer-events: none;
     max-width: 100%;
+  }
+
+  .settings-panel-root {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   }
 
   .scene-controls-toggle {
@@ -92,7 +96,7 @@ style.textContent = `
 
   .scene-controls-groups {
     display: flex;
-    justify-content: space-between;
+    justify-content: flex-start;
     align-items: flex-start;
     flex-wrap: wrap;
     gap: 12px;
@@ -102,14 +106,6 @@ style.textContent = `
 
   .scene-controls-groups > * {
     pointer-events: auto;
-  }
-
-  .scene-controls-settings {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 12px;
-    pointer-events: auto;
-    min-width: 0;
   }
 
   .scene-play-bar {
@@ -156,13 +152,10 @@ style.textContent = `
       display: flex;
     }
 
-    .scene-controls-settings {
-      flex-direction: column;
-      align-items: stretch;
-      width: 100%;
+    .scene-controls-bar {
+      right: 110px;
     }
 
-    .scene-controls-groups .scene-controls-settings > *,
     .scene-controls-groups > div[role="group"] {
       flex-wrap: wrap;
       width: 100%;

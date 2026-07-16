@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import { CuboidCollider, RigidBody } from '@react-three/rapier'
 import * as THREE from 'three'
@@ -62,23 +62,46 @@ function useWoodTexture() {
 /* ------------------------------------------------------------------ */
 /* A single book                                                       */
 /* ------------------------------------------------------------------ */
-function makeSpineTexture({ color, title, author, titleColor }) {
+function shade(hex, amt) {
+  const c = new THREE.Color(hex)
+  if (amt > 0) c.lerp(new THREE.Color('#ffffff'), amt)
+  else c.lerp(new THREE.Color('#000000'), -amt)
+  return '#' + c.getHexString()
+}
+
+function makeSpineTexture({ color, title, author, titleColor, coverImage = null }) {
   const c = document.createElement('canvas')
   c.width = 128
   c.height = 256
   const ctx = c.getContext('2d')
-  const g = ctx.createLinearGradient(0, 0, 128, 0)
-  g.addColorStop(0, shade(color, -0.25))
-  g.addColorStop(0.5, color)
-  g.addColorStop(1, shade(color, -0.25))
-  ctx.fillStyle = g
-  ctx.fillRect(0, 0, 128, 256)
 
-  ctx.fillStyle = shade(color, -0.45)
+  if (coverImage) {
+    // Sample cover art as a vertical strip for the camera-facing spine.
+    const srcW = coverImage.naturalWidth || coverImage.width
+    const srcH = coverImage.naturalHeight || coverImage.height
+    const sampleW = Math.max(1, Math.floor(srcW * 0.22))
+    const sampleX = Math.max(0, Math.floor((srcW - sampleW) / 2))
+    ctx.drawImage(coverImage, sampleX, 0, sampleW, srcH, 0, 0, 128, 256)
+    const wash = ctx.createLinearGradient(0, 0, 128, 0)
+    wash.addColorStop(0, 'rgba(0,0,0,0.35)')
+    wash.addColorStop(0.45, 'rgba(0,0,0,0.12)')
+    wash.addColorStop(1, 'rgba(0,0,0,0.4)')
+    ctx.fillStyle = wash
+    ctx.fillRect(0, 0, 128, 256)
+  } else {
+    const g = ctx.createLinearGradient(0, 0, 128, 0)
+    g.addColorStop(0, shade(color, -0.25))
+    g.addColorStop(0.5, color)
+    g.addColorStop(1, shade(color, -0.25))
+    ctx.fillStyle = g
+    ctx.fillRect(0, 0, 128, 256)
+  }
+
+  ctx.fillStyle = coverImage ? 'rgba(0,0,0,0.45)' : shade(color, -0.45)
   ctx.fillRect(0, 0, 128, 10)
   ctx.fillRect(0, 246, 128, 10)
 
-  ctx.strokeStyle = shade(color, 0.4)
+  ctx.strokeStyle = coverImage ? 'rgba(255,255,255,0.45)' : shade(color, 0.4)
   ctx.lineWidth = 1.5
   ctx.strokeRect(6, 24, 116, 18)
   ctx.strokeRect(6, 214, 116, 18)
@@ -89,25 +112,189 @@ function makeSpineTexture({ color, title, author, titleColor }) {
   ctx.save()
   ctx.translate(64, 128)
   ctx.rotate(-Math.PI / 2)
+  if (coverImage) {
+    ctx.shadowColor = 'rgba(0,0,0,0.85)'
+    ctx.shadowBlur = 4
+  }
   ctx.font = `bold ${title.length > 22 ? 12 : 15}px Georgia, serif`
   ctx.fillText(title.toUpperCase(), 0, -3, 190)
-  ctx.globalAlpha = 0.72
+  ctx.globalAlpha = 0.85
   ctx.font = '8px Arial, sans-serif'
   ctx.fillText(author.toUpperCase(), 0, 12, 170)
   ctx.restore()
+
   const t = new THREE.CanvasTexture(c)
   t.colorSpace = THREE.SRGBColorSpace
   return t
 }
 
+function makeCoverFaceTexture({ color, coverImage = null }) {
+  const c = document.createElement('canvas')
+  c.width = 256
+  c.height = 384
+  const ctx = c.getContext('2d')
+
+  if (coverImage) {
+    const srcW = coverImage.naturalWidth || coverImage.width
+    const srcH = coverImage.naturalHeight || coverImage.height
+    const scale = Math.max(256 / srcW, 384 / srcH)
+    const drawW = srcW * scale
+    const drawH = srcH * scale
+    ctx.drawImage(coverImage, (256 - drawW) / 2, (384 - drawH) / 2, drawW, drawH)
+  } else {
+    const g = ctx.createLinearGradient(0, 0, 256, 384)
+    g.addColorStop(0, shade(color, 0.08))
+    g.addColorStop(1, shade(color, -0.2))
+    ctx.fillStyle = g
+    ctx.fillRect(0, 0, 256, 384)
+  }
+
+  const t = new THREE.CanvasTexture(c)
+  t.colorSpace = THREE.SRGBColorSpace
+  return t
+}
+
+/** url -> HTMLImageElement | null (null means a cached load failure). */
+const COVER_CACHE_MAX = 128
+const coverImageCache = new Map()
+const coverImageWaiters = new Map()
+
+function setCoverCache(url, value) {
+  if (coverImageCache.has(url)) coverImageCache.delete(url)
+  coverImageCache.set(url, value)
+  while (coverImageCache.size > COVER_CACHE_MAX) {
+    const oldest = coverImageCache.keys().next().value
+    coverImageCache.delete(oldest)
+  }
+}
+
+function loadCoverImage(url) {
+  if (!url || typeof Image === 'undefined') return Promise.resolve(null)
+  if (coverImageCache.has(url)) return Promise.resolve(coverImageCache.get(url))
+  if (coverImageWaiters.has(url)) return coverImageWaiters.get(url)
+
+  const promise = new Promise((resolve) => {
+    const image = new Image()
+    image.crossOrigin = 'anonymous'
+    image.onload = () => {
+      setCoverCache(url, image)
+      coverImageWaiters.delete(url)
+      resolve(image)
+    }
+    image.onerror = () => {
+      setCoverCache(url, null)
+      coverImageWaiters.delete(url)
+      resolve(null)
+    }
+    image.src = url
+  })
+
+  coverImageWaiters.set(url, promise)
+  return promise
+}
+
+function useCoverImage(coverUrl) {
+  const [coverImage, setCoverImage] = useState(() =>
+    coverUrl && coverImageCache.has(coverUrl) ? coverImageCache.get(coverUrl) : null
+  )
+
+  useEffect(() => {
+    let cancelled = false
+    if (!coverUrl) {
+      setCoverImage(null)
+      return undefined
+    }
+
+    // Seed immediately from cache (including negative entries) so remounts and
+    // URL swaps do not flash the wrong cover or solid-color fallback.
+    if (coverImageCache.has(coverUrl)) {
+      setCoverImage(coverImageCache.get(coverUrl))
+    } else {
+      setCoverImage(null)
+    }
+
+    loadCoverImage(coverUrl).then((image) => {
+      if (!cancelled) setCoverImage(image)
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [coverUrl])
+
+  return coverImage
+}
+
+/**
+ * Box materials: +x, -x, +y, -y, +z, -z.
+ * +z faces the camera (spine). +x is the front cover edge of the book.
+ */
+function BookMesh({ book }) {
+  const { author, color, title, titleColor, coverUrl, width, height, depth } = book
+  const coverImage = useCoverImage(coverUrl)
+
+  const spineTexture = useMemo(
+    () => makeSpineTexture({ author, color, title, titleColor, coverImage }),
+    [author, color, title, titleColor, coverImage]
+  )
+  const coverFaceTexture = useMemo(
+    () => makeCoverFaceTexture({ color, coverImage }),
+    [color, coverImage]
+  )
+
+  useEffect(() => () => {
+    spineTexture?.dispose()
+  }, [spineTexture])
+
+  useEffect(() => () => {
+    coverFaceTexture?.dispose()
+  }, [coverFaceTexture])
+
+  const materials = useMemo(() => {
+    const spine = new THREE.MeshStandardMaterial({
+      map: spineTexture,
+      roughness: 0.55,
+      metalness: 0.05,
+    })
+    const cover = new THREE.MeshStandardMaterial({
+      map: coverFaceTexture,
+      roughness: 0.62,
+      metalness: 0.03,
+    })
+    const board = new THREE.MeshStandardMaterial({
+      color: shade(color, -0.12),
+      roughness: 0.72,
+      metalness: 0.04,
+    })
+    const pageEdge = new THREE.MeshStandardMaterial({
+      color: '#e8dcc4',
+      roughness: 0.88,
+      metalness: 0,
+    })
+
+    // +x front cover, -x back board, +y top, -y bottom, +z spine, -z back edge
+    return [cover, board, board, board, spine, pageEdge]
+  }, [spineTexture, coverFaceTexture, color])
+
+  useEffect(() => () => {
+    const seen = new Set()
+    for (const material of materials) {
+      if (seen.has(material)) continue
+      seen.add(material)
+      material.dispose()
+    }
+  }, [materials])
+
+  return (
+    <mesh castShadow receiveShadow material={materials}>
+      <boxGeometry args={[width, height, depth]} />
+    </mesh>
+  )
+}
+
 function Book({ book, selected, onSelect }) {
   const groupRef = useRef()
   const { gl } = useThree()
-  const { author, color, title, titleColor } = book
-  const spineTexture = useMemo(
-    () => makeSpineTexture({ author, color, title, titleColor }),
-    [author, color, title, titleColor]
-  )
 
   useFrame((_, delta) => {
     if (!groupRef.current) return
@@ -149,23 +336,9 @@ function Book({ book, selected, onSelect }) {
         gl.domElement.style.cursor = 'auto'
       }}
     >
-      <mesh castShadow receiveShadow>
-        <boxGeometry args={[book.width, book.height, book.depth]} />
-        <meshStandardMaterial
-          map={spineTexture}
-          roughness={0.55}
-          metalness={0.05}
-        />
-      </mesh>
+      <BookMesh book={book} />
     </group>
   )
-}
-
-function shade(hex, amt) {
-  const c = new THREE.Color(hex)
-  if (amt > 0) c.lerp(new THREE.Color('#ffffff'), amt)
-  else c.lerp(new THREE.Color('#000000'), -amt)
-  return '#' + c.getHexString()
 }
 
 /* ------------------------------------------------------------------ */
@@ -183,12 +356,6 @@ function PhysicsBook({ book, mode }) {
   const velocity = useRef(new THREE.Vector3())
   const lastTime = useRef(0)
   const { camera, gl } = useThree()
-  const { author, color, title, titleColor } = book
-
-  const spineTexture = useMemo(
-    () => makeSpineTexture({ author, color, title, titleColor }),
-    [author, color, title, titleColor]
-  )
 
   const onPointerDown = useCallback(
     (e) => {
@@ -285,14 +452,7 @@ function PhysicsBook({ book, mode }) {
         }}
         rotation={[0, 0, book.tilt || 0]}
       >
-          <mesh castShadow receiveShadow>
-            <boxGeometry args={[book.width, book.height, book.depth]} />
-            <meshStandardMaterial
-              map={spineTexture}
-              roughness={0.55}
-              metalness={0.05}
-            />
-          </mesh>
+        <BookMesh book={book} />
       </group>
     </RigidBody>
   )

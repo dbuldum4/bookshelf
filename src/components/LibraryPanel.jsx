@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  computeLibraryStats,
   downloadLibraryExport,
+  LIBRARY_SORT_OPTIONS,
   lookupBookByIsbn,
-  parseLibraryImport,
+  parseLibraryFile,
   READING_STATUSES,
   searchAcclaimedBooks,
+  sortLibrary,
 } from '../library'
 
 const fontFamily =
@@ -62,6 +65,10 @@ function uniqueSorted(values) {
   return [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
 }
 
+function formatPages(count) {
+  return new Intl.NumberFormat().format(count || 0)
+}
+
 function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook, onReplaceLibrary }) {
   const [open, setOpen] = useState(true)
   const [adding, setAdding] = useState(false)
@@ -70,6 +77,7 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook, onRepl
   const [authorFilter, setAuthorFilter] = useState('All')
   const [tagFilter, setTagFilter] = useState('All')
   const [ratingFilter, setRatingFilter] = useState('All')
+  const [sortBy, setSortBy] = useState('shelf')
   const [draft, setDraft] = useState({ title: '', author: '', isbn: '', pageCount: '', coverUrl: '' })
   const [lookupError, setLookupError] = useState('')
   const [lookingUp, setLookingUp] = useState(false)
@@ -105,10 +113,12 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook, onRepl
     }
   }
 
-  const stats = useMemo(() => READING_STATUSES.map((value) => ({
+  const readingStats = useMemo(() => computeLibraryStats(library), [library])
+
+  const statusStats = useMemo(() => READING_STATUSES.map((value) => ({
     label: value,
-    count: library.filter((book) => book.status === value).length,
-  })), [library])
+    count: readingStats.byStatus[value] || 0,
+  })), [readingStats])
 
   const authorOptions = useMemo(
     () => uniqueSorted(library.map((book) => book.author?.trim())),
@@ -129,6 +139,7 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook, onRepl
     setAuthorFilter('All')
     setTagFilter('All')
     setRatingFilter('All')
+    setSortBy('shelf')
   }
 
   useEffect(() => {
@@ -152,7 +163,7 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook, onRepl
 
   const visibleBooks = useMemo(() => {
     const search = query.trim().toLowerCase()
-    return library.filter((book) => {
+    const filtered = library.filter((book) => {
       const matchesStatus = status === 'All' || book.status === status
       const matchesAuthor = authorFilter === 'All' || book.author === authorFilter
       const matchesTag = tagFilter === 'All' || (book.tags || []).includes(tagFilter)
@@ -167,7 +178,8 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook, onRepl
       ].join(' ').toLowerCase().includes(search)
       return matchesStatus && matchesAuthor && matchesTag && matchesRating && matchesSearch
     })
-  }, [library, query, status, authorFilter, tagFilter, ratingFilter])
+    return sortLibrary(filtered, sortBy)
+  }, [library, query, status, authorFilter, tagFilter, ratingFilter, sortBy])
 
   useEffect(() => {
     const search = draft.title.trim()
@@ -239,9 +251,10 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook, onRepl
     clearTransferFeedback()
     try {
       const text = await file.text()
-      const { books, count } = parseLibraryImport(text)
+      const { books, count, format } = parseLibraryFile(text, file.name)
+      const kind = format === 'csv' ? 'CSV' : 'JSON'
       const confirmed = window.confirm(
-        `Replace your current library (${library.length} book${library.length === 1 ? '' : 's'}) with ${count} imported book${count === 1 ? '' : 's'}?\n\nThis cannot be undone unless you export a backup first.`
+        `Replace your current library (${library.length} book${library.length === 1 ? '' : 's'}) with ${count} imported book${count === 1 ? '' : 's'} from ${kind}?\n\nThis cannot be undone unless you export a backup first.`
       )
       if (!confirmed) {
         showTransferFeedback('Import cancelled. Your library was not changed.')
@@ -354,13 +367,64 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook, onRepl
         </button>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, padding: '0 16px 14px' }}>
-        {stats.map((item) => (
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, padding: '0 16px 8px' }}>
+        {statusStats.map((item) => (
           <div key={item.label} style={{ borderRadius: 10, padding: '8px 7px', background: 'rgba(255,255,255,0.055)' }}>
             <div style={{ color: '#fff', fontSize: 16, fontWeight: 700 }}>{item.count}</div>
             <div style={{ color: 'rgba(255,255,255,0.47)', fontSize: 10, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.label}</div>
           </div>
         ))}
+      </div>
+
+      <div
+        aria-label="Reading stats"
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(2, 1fr)',
+          gap: 6,
+          padding: '0 16px 12px',
+        }}
+      >
+        <div style={{ borderRadius: 10, padding: '8px 9px', background: 'rgba(126, 91, 226, 0.16)', border: '1px solid rgba(169, 131, 255, 0.22)' }}>
+          <div style={{ color: '#fff', fontSize: 15, fontWeight: 700 }}>{readingStats.finishedThisYear}</div>
+          <div style={{ color: 'rgba(255,255,255,0.52)', fontSize: 10 }}>Finished in {readingStats.year}</div>
+        </div>
+        <div style={{ borderRadius: 10, padding: '8px 9px', background: 'rgba(255,255,255,0.055)' }}>
+          <div style={{ color: '#fff', fontSize: 15, fontWeight: 700 }}>{formatPages(readingStats.pagesRead)}</div>
+          <div style={{ color: 'rgba(255,255,255,0.52)', fontSize: 10 }}>Pages read</div>
+        </div>
+        <div style={{ borderRadius: 10, padding: '8px 9px', background: 'rgba(255,255,255,0.055)' }}>
+          <div style={{ color: '#fff', fontSize: 15, fontWeight: 700 }}>
+            {readingStats.ratedCount ? `${readingStats.averageRating.toFixed(1)} ★` : '—'}
+          </div>
+          <div style={{ color: 'rgba(255,255,255,0.52)', fontSize: 10 }}>
+            Avg rating{readingStats.ratedCount ? ` · ${readingStats.ratedCount}` : ''}
+          </div>
+        </div>
+        <div style={{ borderRadius: 10, padding: '8px 9px', background: 'rgba(255,255,255,0.055)' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 18, marginBottom: 4 }}>
+            {(() => {
+              const max = Math.max(1, ...[1, 2, 3, 4, 5].map((s) => readingStats.ratingCounts[s] || 0))
+              return [1, 2, 3, 4, 5].map((star) => {
+                const count = readingStats.ratingCounts[star] || 0
+                const height = count ? Math.max(3, Math.round((count / max) * 16)) : 2
+                return (
+                  <span
+                    key={star}
+                    title={`${star}★: ${count}`}
+                    style={{
+                      flex: 1,
+                      height,
+                      borderRadius: 2,
+                      background: count ? 'rgba(250, 204, 21, 0.75)' : 'rgba(255,255,255,0.12)',
+                    }}
+                  />
+                )
+              })
+            })()}
+          </div>
+          <div style={{ color: 'rgba(255,255,255,0.52)', fontSize: 10 }}>Ratings</div>
+        </div>
       </div>
 
       <div style={{ display: 'grid', gap: 8, padding: '0 16px 12px' }}>
@@ -414,6 +478,16 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook, onRepl
             {tagOptions.map((tag) => <option key={tag} value={tag}>{tag}</option>)}
           </select>
         </div>
+        <select
+          aria-label="Sort library"
+          value={sortBy}
+          onChange={(event) => setSortBy(event.target.value)}
+          style={{ ...inputStyle, padding: '0 6px' }}
+        >
+          {LIBRARY_SORT_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </select>
       </div>
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, padding: '0 16px 10px' }}>
@@ -457,14 +531,15 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook, onRepl
           onClick={openImportPicker}
           disabled={importing}
           style={{ ...actionButton(), flex: 1, opacity: importing ? 0.45 : 1 }}
+          title="Import Bookshelf JSON or a Goodreads CSV export"
         >
-          {importing ? 'Importing…' : 'Import JSON'}
+          {importing ? 'Importing…' : 'Import'}
         </button>
         <input
           ref={importInputRef}
           type="file"
-          accept="application/json,.json"
-          aria-label="Import library JSON file"
+          accept="application/json,.json,text/csv,.csv"
+          aria-label="Import library JSON or CSV file"
           onChange={importLibrary}
           style={{ display: 'none' }}
         />

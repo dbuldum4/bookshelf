@@ -36,21 +36,10 @@ const modeLabels = {
   play: 'Play',
 }
 
-const graphicsQualityOptions = [
-  { value: 'low', label: 'Low' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'high', label: 'High' },
-]
-
 function Controls({
   mode,
   setMode,
-  galaxyMode,
-  setGalaxyMode,
-  graphicsQuality,
-  setGraphicsQuality,
   reducedMotion,
-  setReducedMotion,
   onReset,
   shelfPage,
   shelfPageCount,
@@ -90,50 +79,6 @@ function Controls({
                 {label}
               </button>
             ))}
-          </div>
-
-          <div className="scene-controls-settings">
-            <div style={controlPanelStyle} role="group" aria-label="Galaxy style">
-              {['pixelated', 'realistic'].map((value) => (
-                <button
-                  type="button"
-                  key={value}
-                  onClick={() => setGalaxyMode(value)}
-                  style={controlButtonStyle(galaxyMode === value, reducedMotion)}
-                >
-                  {value === 'pixelated' ? 'Pixelated' : 'Realistic'}
-                </button>
-              ))}
-            </div>
-
-            <div style={controlPanelStyle} role="group" aria-label="Graphics quality">
-              {graphicsQualityOptions.map(({ value, label }) => (
-                <button
-                  type="button"
-                  key={value}
-                  aria-pressed={graphicsQuality === value}
-                  aria-label={`${label} graphics quality`}
-                  title={`${label} graphics quality`}
-                  onClick={() => setGraphicsQuality(value)}
-                  style={controlButtonStyle(graphicsQuality === value, reducedMotion)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-
-            <div style={controlPanelStyle} role="group" aria-label="Motion preference">
-              <button
-                type="button"
-                aria-pressed={reducedMotion}
-                aria-label={reducedMotion ? 'Reduced motion on' : 'Reduced motion off'}
-                title={reducedMotion ? 'Reduced motion is on' : 'Reduce motion'}
-                onClick={() => setReducedMotion(!reducedMotion)}
-                style={controlButtonStyle(reducedMotion, reducedMotion)}
-              >
-                Reduce motion
-              </button>
-            </div>
           </div>
         </div>
       </div>

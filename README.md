@@ -12,6 +12,9 @@ A procedural 3D bookshelf scene built with React, Vite, Three.js, and Rapier phy
 - A curated 40-book library with real titles and authors rendered on each spine.
 - Selectable books that pull forward and open an editable detail card.
 - Reading status and personal notes saved locally in the browser.
+- Library panel with search, filters, sort, reading stats (finished this year, pages read, ratings), and JSON or Goodreads CSV import/export.
+- Cover art from Open Library rendered on 3D spines and front covers when available.
+- Settings (top right) for galaxy style, graphics quality, and reduced motion.
 - Two galaxy backdrops:
   - Realistic: soft sprite stars, bright core glow, spiral arms, halo stars, and nebula color variation.
   - Pixelated: a simpler additive spiral galaxy made from point particles.
@@ -76,11 +79,13 @@ bun run test:e2e # Run Playwright browser smoke tests
 src/
   App.jsx                 # Application state and full-window canvas shell
   components/
-    Controls.jsx          # Camera, galaxy, and play-mode controls
+    Controls.jsx          # Camera modes, shelf pager, and play-mode controls
+    SettingsPanel.jsx     # Top-right settings (galaxy, graphics, motion)
+    LibraryPanel.jsx      # Searchable library list, stats, sort, import/export
     BookDetails.jsx       # Selected-book metadata, status, and notes
     ErrorBoundary.jsx     # Recoverable application error screen
     WebGLFallback.jsx     # Non-3D library experience when WebGL is unavailable
-  library.js              # Book catalog, shelf layout, and local persistence
+  library.js              # Book catalog, shelf layout, stats, CSV/JSON transfer
   library.test.js         # Persistence and shelf-layout unit tests
   webgl.js                # WebGL capability detection
   scene/

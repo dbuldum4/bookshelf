@@ -312,6 +312,251 @@ export function downloadLibraryExport(library, filename) {
   return { filename: name, count: Array.isArray(library) ? library.length : 0 }
 }
 
+/** Parse a single CSV line with RFC 4180-style quoting. */
+export function parseCsvLine(line) {
+  const cells = []
+  let current = ''
+  let inQuotes = false
+
+  for (let i = 0; i < line.length; i += 1) {
+    const char = line[i]
+    if (inQuotes) {
+      if (char === '"') {
+        if (line[i + 1] === '"') {
+          current += '"'
+          i += 1
+        } else {
+          inQuotes = false
+        }
+      } else {
+        current += char
+      }
+      continue
+    }
+
+    if (char === '"') {
+      inQuotes = true
+    } else if (char === ',') {
+      cells.push(current)
+      current = ''
+    } else {
+      current += char
+    }
+  }
+
+  cells.push(current)
+  return cells
+}
+
+function splitCsvRows(text) {
+  const rows = []
+  let current = ''
+  let inQuotes = false
+
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i]
+    if (char === '"') {
+      inQuotes = !inQuotes
+      current += char
+      continue
+    }
+    if (!inQuotes && (char === '\n' || char === '\r')) {
+      if (char === '\r' && text[i + 1] === '\n') i += 1
+      if (current.trim()) rows.push(current)
+      current = ''
+      continue
+    }
+    current += char
+  }
+
+  if (current.trim()) rows.push(current)
+  return rows
+}
+
+function normalizeHeaderKey(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+}
+
+function cell(row, keys) {
+  for (const key of keys) {
+    if (row[key] != null && String(row[key]).trim()) return String(row[key]).trim()
+  }
+  return ''
+}
+
+/** Map a single Goodreads shelf token. Returns null when unrecognized. */
+function matchGoodreadsShelf(value) {
+  const shelf = String(value || '').trim().toLowerCase()
+  if (shelf === 'currently-reading' || shelf === 'currently reading' || shelf === 'reading') {
+    return 'Reading'
+  }
+  if (shelf === 'read' || shelf === 'finished') return 'Finished'
+  if (shelf === 'to-read' || shelf === 'to read' || shelf === 'want to read') return 'Want to Read'
+  return null
+}
+
+/**
+ * Resolve reading status from CSV columns.
+ * Prefer Exclusive Shelf / Shelf / Status. Fall back to Bookshelves only by
+ * scanning comma-separated tokens for a known exclusive-shelf value so multi-tag
+ * cells like "currently-reading, fantasy" do not collapse to Want to Read.
+ */
+function resolveGoodreadsStatus(row) {
+  const exclusive = cell(row, ['exclusive shelf', 'shelf', 'status'])
+  if (exclusive) {
+    const mapped = matchGoodreadsShelf(exclusive)
+    if (mapped) return mapped
+    // Exclusive shelf is sometimes free-form; still try token split.
+    for (const token of exclusive.split(/[,;]/).map((part) => part.trim()).filter(Boolean)) {
+      const tokenMapped = matchGoodreadsShelf(token)
+      if (tokenMapped) return tokenMapped
+    }
+    return 'Want to Read'
+  }
+
+  const bookshelves = cell(row, ['bookshelves'])
+  if (!bookshelves) return 'Want to Read'
+  for (const token of bookshelves.split(/[,;]/).map((part) => part.trim()).filter(Boolean)) {
+    const mapped = matchGoodreadsShelf(token)
+    if (mapped) return mapped
+  }
+  return 'Want to Read'
+}
+
+function parseLooseDate(value) {
+  const raw = String(value || '').trim()
+  if (!raw) return ''
+  // Goodreads often uses YYYY/MM/DD
+  const slash = raw.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/)
+  if (slash) {
+    const [, y, m, d] = slash
+    return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`
+  }
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10)
+  const parsed = Date.parse(raw)
+  if (!Number.isFinite(parsed)) return ''
+  const date = new Date(parsed)
+  const offset = date.getTimezoneOffset() * 60_000
+  return new Date(date.getTime() - offset).toISOString().slice(0, 10)
+}
+
+function cleanIsbn(value) {
+  return String(value || '').replace(/[^0-9Xx]/g, '').toUpperCase()
+}
+
+/**
+ * Parse Goodreads-style or simple CSV exports into normalized library books.
+ * Accepts headers like Title, Author, ISBN13, My Rating, Exclusive Shelf, Date Read.
+ */
+export function parseLibraryCsv(text) {
+  if (typeof text !== 'string' || !text.trim()) {
+    throw new Error('Choose a non-empty CSV file to import.')
+  }
+
+  const rows = splitCsvRows(text.replace(/^\uFEFF/, ''))
+  if (rows.length < 2) {
+    throw new Error('That CSV file does not contain any books.')
+  }
+
+  const headers = parseCsvLine(rows[0]).map(normalizeHeaderKey)
+  if (!headers.some((header) => header === 'title' || header === 'book title')) {
+    throw new Error('CSV must include a Title column (Goodreads export works).')
+  }
+
+  const books = []
+  const seenIds = new Set()
+
+  for (let index = 1; index < rows.length; index += 1) {
+    const cells = parseCsvLine(rows[index])
+    if (!cells.some((value) => String(value || '').trim())) continue
+
+    const row = {}
+    headers.forEach((header, headerIndex) => {
+      if (header) row[header] = cells[headerIndex] ?? ''
+    })
+
+    const title = cell(row, ['title', 'book title'])
+    if (!title) continue
+
+    const author = cell(row, ['author', 'author l f', 'additional authors']) || 'Unknown author'
+    const isbn = cleanIsbn(cell(row, ['isbn13', 'isbn 13', 'isbn']))
+    const pageCount = asNumber(cell(row, ['number of pages', 'pages', 'page count']))
+    const rating = Math.min(5, asNumber(cell(row, ['my rating', 'rating', 'stars'])))
+    const status = resolveGoodreadsStatus(row)
+    const finishedAt = parseLooseDate(cell(row, ['date read', 'date finished', 'finished at', 'finished']))
+    const startedAt = parseLooseDate(cell(row, ['date started', 'started at', 'started']))
+    const createdAt = parseLooseDate(cell(row, ['date added', 'created at', 'added']))
+    const notes = cell(row, ['my review', 'private notes', 'notes', 'review'])
+    const shelves = cell(row, ['bookshelves', 'tags'])
+    const tags = shelves
+      ? shelves.split(/[,;]/).map((tag) => tag.trim()).filter(Boolean)
+      : []
+
+    const draft = {
+      title,
+      author,
+      isbn: isValidIsbn(isbn) ? isbn : '',
+      pageCount,
+      rating,
+      status,
+      notes,
+      tags,
+      finishedAt,
+      startedAt,
+      createdAt: createdAt || undefined,
+      currentPage: status === 'Finished' && pageCount ? pageCount : 0,
+    }
+
+    const book = pickBookFields(normalizeBook(draft, index - 1))
+    if (seenIds.has(book.id)) book.id = makeId(book.title, index)
+    seenIds.add(book.id)
+    books.push(book)
+  }
+
+  if (!books.length) {
+    throw new Error('That CSV file does not contain any books.')
+  }
+
+  return {
+    books,
+    count: books.length,
+    format: 'csv',
+    version: null,
+  }
+}
+
+function looksLikeCsv(text) {
+  const firstLine = text.split(/\r?\n/).find((line) => line.trim()) || ''
+  if (!firstLine.includes(',')) return false
+  const headers = parseCsvLine(firstLine).map(normalizeHeaderKey)
+  return headers.includes('title') || headers.includes('book title')
+}
+
+/**
+ * Parse a library transfer file. Supports versioned JSON, bare book arrays,
+ * and Goodreads-style CSV exports.
+ */
+export function parseLibraryFile(text, filename = '') {
+  const name = String(filename || '').toLowerCase()
+  const trimmed = typeof text === 'string' ? text.trim() : ''
+  if (!trimmed) throw new Error('Choose a non-empty library file to import.')
+
+  if (name.endsWith('.csv') || (!name.endsWith('.json') && looksLikeCsv(trimmed))) {
+    return parseLibraryCsv(text)
+  }
+
+  try {
+    return parseLibraryImport(text)
+  } catch (error) {
+    if (looksLikeCsv(trimmed)) return parseLibraryCsv(text)
+    throw error
+  }
+}
+
 function isValidIsbn(isbn) {
   if (/^\d{13}$/.test(isbn)) {
     const sum = [...isbn].reduce(
@@ -407,6 +652,105 @@ export async function searchAcclaimedBooks(value, signal) {
 function bookRandom(index, salt) {
   const value = Math.sin((index + 1) * 91.345 + salt * 17.123) * 43758.5453
   return value - Math.floor(value)
+}
+
+/** Sort keys shown in the library list. */
+export const LIBRARY_SORT_OPTIONS = [
+  { value: 'shelf', label: 'Shelf order' },
+  { value: 'title', label: 'Title A–Z' },
+  { value: 'author', label: 'Author A–Z' },
+  { value: 'rating', label: 'Highest rated' },
+  { value: 'finished', label: 'Recently finished' },
+  { value: 'recent', label: 'Recently added' },
+]
+
+function compareText(a, b) {
+  return String(a || '').localeCompare(String(b || ''), undefined, { sensitivity: 'base' })
+}
+
+function compareDateDesc(a, b) {
+  const left = a ? Date.parse(a) : Number.NaN
+  const right = b ? Date.parse(b) : Number.NaN
+  const leftValid = Number.isFinite(left)
+  const rightValid = Number.isFinite(right)
+  if (leftValid && rightValid) return right - left
+  if (leftValid) return -1
+  if (rightValid) return 1
+  return 0
+}
+
+/** Return a new array sorted by the given library sort key. */
+export function sortLibrary(books, sortBy = 'shelf') {
+  const list = Array.isArray(books) ? [...books] : []
+  switch (sortBy) {
+    case 'title':
+      return list.sort((a, b) => compareText(a.title, b.title) || compareText(a.author, b.author))
+    case 'author':
+      return list.sort((a, b) => compareText(a.author, b.author) || compareText(a.title, b.title))
+    case 'rating':
+      return list.sort((a, b) => (Number(b.rating) || 0) - (Number(a.rating) || 0)
+        || compareText(a.title, b.title))
+    case 'finished':
+      return list.sort((a, b) => compareDateDesc(a.finishedAt, b.finishedAt)
+        || compareText(a.title, b.title))
+    case 'recent':
+      return list.sort((a, b) => compareDateDesc(a.createdAt, b.createdAt)
+        || compareText(a.title, b.title))
+    case 'shelf':
+    default:
+      return list
+  }
+}
+
+function yearFromDateString(value) {
+  if (typeof value !== 'string' || value.length < 4) return null
+  const year = Number(value.slice(0, 4))
+  return Number.isInteger(year) ? year : null
+}
+
+/**
+ * Aggregate reading stats for the library panel dashboard.
+ * pagesRead counts finished pageCount plus in-progress currentPage.
+ */
+export function computeLibraryStats(library, now = new Date()) {
+  const books = Array.isArray(library) ? library : []
+  const year = now.getFullYear()
+  const byStatus = Object.fromEntries(READING_STATUSES.map((status) => [status, 0]))
+  const ratingCounts = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }
+  let finishedThisYear = 0
+  let pagesRead = 0
+  let ratingSum = 0
+  let ratedCount = 0
+
+  for (const book of books) {
+    const status = READING_STATUSES.includes(book.status) ? book.status : 'Want to Read'
+    byStatus[status] += 1
+
+    const rating = Math.min(5, Math.max(0, Math.round(Number(book.rating) || 0)))
+    ratingCounts[rating] += 1
+    if (rating > 0) {
+      ratingSum += rating
+      ratedCount += 1
+    }
+
+    if (status === 'Finished') {
+      pagesRead += asNumber(book.pageCount)
+      if (yearFromDateString(book.finishedAt) === year) finishedThisYear += 1
+    } else if (status === 'Reading') {
+      pagesRead += asNumber(book.currentPage)
+    }
+  }
+
+  return {
+    total: books.length,
+    byStatus,
+    finishedThisYear,
+    pagesRead,
+    averageRating: ratedCount ? ratingSum / ratedCount : 0,
+    ratedCount,
+    ratingCounts,
+    year,
+  }
 }
 
 export function buildShelfBooks(library, shelfIndex) {

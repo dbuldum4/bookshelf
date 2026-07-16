@@ -3,6 +3,7 @@ import { Canvas, useThree } from '@react-three/fiber'
 import BookDetails from './components/BookDetails'
 import Controls from './components/Controls'
 import LibraryPanel from './components/LibraryPanel'
+import SettingsPanel from './components/SettingsPanel'
 import WebGLFallback from './components/WebGLFallback'
 import {
   DEFAULT_GRAPHICS_QUALITY,
@@ -171,10 +172,11 @@ export default function App() {
   useEffect(() => {
     const onKeyDown = (event) => {
       if (event.key === 'Escape') {
-        // Close book details / clear selection; form fields keep their own Escape handling first.
-        if (selectedBookId && !event.defaultPrevented) {
-          setSelectedBookId(null)
-        }
+        // Close book details / clear selection; form fields and modals handle Escape first.
+        if (event.defaultPrevented) return
+        // Do not clear selection while a modal/dialog (e.g. Settings) is open.
+        if (document.querySelector('[data-modal="true"], [aria-modal="true"]')) return
+        if (selectedBookId) setSelectedBookId(null)
         return
       }
 
@@ -306,20 +308,25 @@ export default function App() {
       </div>
 
       {webGLAvailable && (
-        <Controls
-          mode={mode}
-          setMode={setMode}
-          galaxyMode={galaxyMode}
-          setGalaxyMode={setGalaxyMode}
-          graphicsQuality={graphicsQuality}
-          setGraphicsQuality={setGraphicsQuality}
-          reducedMotion={reducedMotion}
-          setReducedMotion={setReducedMotionPreference}
-          onReset={() => setResetKey((key) => key + 1)}
-          shelfPage={shelfPage}
-          shelfPageCount={shelfPageCount}
-          setShelfPage={setShelfPage}
-        />
+        <>
+          <Controls
+            mode={mode}
+            setMode={setMode}
+            reducedMotion={reducedMotion}
+            onReset={() => setResetKey((key) => key + 1)}
+            shelfPage={shelfPage}
+            shelfPageCount={shelfPageCount}
+            setShelfPage={setShelfPage}
+          />
+          <SettingsPanel
+            galaxyMode={galaxyMode}
+            setGalaxyMode={setGalaxyMode}
+            graphicsQuality={graphicsQuality}
+            setGraphicsQuality={setGraphicsQuality}
+            reducedMotion={reducedMotion}
+            setReducedMotion={setReducedMotionPreference}
+          />
+        </>
       )}
       <LibraryPanel
         library={library}
