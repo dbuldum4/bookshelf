@@ -1,13 +1,24 @@
-import { useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import { DEFAULT_GRAPHICS_QUALITY, getGraphicsPreset } from '../graphicsQuality'
 
 function resolveGraphics(graphics) {
-  return graphics || getGraphicsPreset(DEFAULT_GRAPHICS_QUALITY)
+  const base = getGraphicsPreset(DEFAULT_GRAPHICS_QUALITY)
+  if (!graphics || typeof graphics !== 'object') return base
+  return { ...base, ...graphics }
 }
 
-function Galaxy({ graphics: graphicsProp } = {}) {
+function makeDummyTexture() {
+  const canvas = document.createElement('canvas')
+  canvas.width = 1
+  canvas.height = 1
+  const tex = new THREE.CanvasTexture(canvas)
+  tex.colorSpace = THREE.SRGBColorSpace
+  return tex
+}
+
+function Galaxy({ graphics: graphicsProp, reducedMotion = false } = {}) {
   const graphics = resolveGraphics(graphicsProp)
   const pointsRef = useRef()
   const dustRef = useRef()
@@ -79,6 +90,7 @@ function Galaxy({ graphics: graphicsProp } = {}) {
   }, [graphics.galaxyCount, graphics.galaxyDustCount])
 
   useFrame((_, delta) => {
+    if (reducedMotion) return
     if (pointsRef.current) {
       pointsRef.current.rotation.y += delta * 0.02
     }
@@ -101,6 +113,7 @@ function Galaxy({ graphics: graphicsProp } = {}) {
           opacity={0.3}
           depthWrite={false}
           blending={THREE.AdditiveBlending}
+          toneMapped={false}
           vertexColors
         />
       </points>
@@ -118,8 +131,10 @@ function Galaxy({ graphics: graphicsProp } = {}) {
         <pointsMaterial
           size={0.38}
           sizeAttenuation
+          transparent
           depthWrite={false}
           blending={THREE.AdditiveBlending}
+          toneMapped={false}
           vertexColors
         />
       </points>
@@ -136,6 +151,7 @@ function makeStarTexture() {
   canvas.width = size
   canvas.height = size
   const ctx = canvas.getContext('2d')
+  if (!ctx) return makeDummyTexture()
   const grad = ctx.createRadialGradient(
     size / 2, size / 2, 0,
     size / 2, size / 2, size / 2
@@ -157,6 +173,7 @@ function makeGlowTexture() {
   canvas.width = size
   canvas.height = size
   const ctx = canvas.getContext('2d')
+  if (!ctx) return makeDummyTexture()
   const grad = ctx.createRadialGradient(
     size / 2, size / 2, 0,
     size / 2, size / 2, size / 2
@@ -193,6 +210,7 @@ function makeNebulaTexture(seed, pixelated = false, detail = {}) {
   canvas.width = size
   canvas.height = size
   const ctx = canvas.getContext('2d')
+  if (!ctx) return makeDummyTexture()
   const rand = seededRandom(seed)
   const palette = pixelated
     ? ['80,64,255', '26,220,255', '255,96,190', '255,190,105']
@@ -269,9 +287,10 @@ function makeNebulaTexture(seed, pixelated = false, detail = {}) {
   return tex
 }
 
-function DeepSpaceStars({ graphics: graphicsProp } = {}) {
+function DeepSpaceStars({ graphics: graphicsProp, reducedMotion = false } = {}) {
   const graphics = resolveGraphics(graphicsProp)
   const starTex = useMemo(() => makeStarTexture(), [])
+  useEffect(() => () => { starTex.dispose() }, [starTex])
   const nearRef = useRef()
   const farRef = useRef()
 
@@ -311,6 +330,7 @@ function DeepSpaceStars({ graphics: graphicsProp } = {}) {
   }, [graphics.starNearCount, graphics.starFarCount])
 
   useFrame((_, delta) => {
+    if (reducedMotion) return
     if (nearRef.current) nearRef.current.rotation.y += delta * 0.004
     if (farRef.current) farRef.current.rotation.y -= delta * 0.0015
   })
@@ -331,6 +351,7 @@ function DeepSpaceStars({ graphics: graphicsProp } = {}) {
           alphaTest={0.01}
           depthWrite={false}
           blending={THREE.AdditiveBlending}
+          toneMapped={false}
           vertexColors
         />
       </points>
@@ -348,6 +369,7 @@ function DeepSpaceStars({ graphics: graphicsProp } = {}) {
           alphaTest={0.01}
           depthWrite={false}
           blending={THREE.AdditiveBlending}
+          toneMapped={false}
           vertexColors
         />
       </points>
@@ -365,6 +387,7 @@ function NebulaLayer({ seed, pixelated, graphics: graphicsProp, position, scale,
     }),
     [seed, pixelated, graphics.nebulaTextureSize, graphics.nebulaBlobCount, graphics.nebulaParticleCount],
   )
+  useEffect(() => () => { texture.dispose() }, [texture])
 
   return (
     <sprite position={position} scale={scale}>
@@ -375,15 +398,18 @@ function NebulaLayer({ seed, pixelated, graphics: graphicsProp, position, scale,
         rotation={rotation}
         depthWrite={false}
         blending={THREE.AdditiveBlending}
+        toneMapped={false}
       />
     </sprite>
   )
 }
 
-function RealisticGalaxy({ graphics: graphicsProp } = {}) {
+function RealisticGalaxy({ graphics: graphicsProp, reducedMotion = false } = {}) {
   const graphics = resolveGraphics(graphicsProp)
   const starTex = useMemo(() => makeStarTexture(), [])
   const glowTex = useMemo(() => makeGlowTexture(), [])
+  useEffect(() => () => { starTex.dispose() }, [starTex])
+  useEffect(() => () => { glowTex.dispose() }, [glowTex])
   const coreRef = useRef()
   const armsRef = useRef()
   const haloRef = useRef()
@@ -544,6 +570,7 @@ function RealisticGalaxy({ graphics: graphicsProp } = {}) {
   ])
 
   useFrame((_, delta) => {
+    if (reducedMotion) return
     if (coreRef.current) coreRef.current.rotation.y += delta * 0.015
     if (armsRef.current) armsRef.current.rotation.y += delta * 0.015
     if (haloRef.current) haloRef.current.rotation.y += delta * 0.008
@@ -561,6 +588,7 @@ function RealisticGalaxy({ graphics: graphicsProp } = {}) {
           opacity={0.7}
           depthWrite={false}
           blending={THREE.AdditiveBlending}
+          toneMapped={false}
         />
       </sprite>
 
@@ -579,6 +607,7 @@ function RealisticGalaxy({ graphics: graphicsProp } = {}) {
           alphaTest={0.01}
           depthWrite={false}
           blending={THREE.AdditiveBlending}
+          toneMapped={false}
           vertexColors
         />
       </points>
@@ -603,6 +632,7 @@ function RealisticGalaxy({ graphics: graphicsProp } = {}) {
           alphaTest={0.01}
           depthWrite={false}
           blending={THREE.AdditiveBlending}
+          toneMapped={false}
           vertexColors
         />
       </points>
@@ -627,6 +657,7 @@ function RealisticGalaxy({ graphics: graphicsProp } = {}) {
           alphaTest={0.01}
           depthWrite={false}
           blending={THREE.AdditiveBlending}
+          toneMapped={false}
           vertexColors
         />
       </points>
@@ -646,6 +677,7 @@ function RealisticGalaxy({ graphics: graphicsProp } = {}) {
           alphaTest={0.01}
           depthWrite={false}
           blending={THREE.AdditiveBlending}
+          toneMapped={false}
           vertexColors
         />
       </points>
@@ -671,6 +703,7 @@ function RealisticGalaxy({ graphics: graphicsProp } = {}) {
           alphaTest={0.01}
           depthWrite={false}
           blending={THREE.AdditiveBlending}
+          toneMapped={false}
           vertexColors
         />
       </points>
@@ -678,9 +711,4 @@ function RealisticGalaxy({ graphics: graphicsProp } = {}) {
   )
 }
 
-/* ------------------------------------------------------------------ */
-/* Procedural wood texture                                            */
-/* ------------------------------------------------------------------ */
-
 export { DeepSpaceStars, Galaxy, NebulaLayer, RealisticGalaxy }
-

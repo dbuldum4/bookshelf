@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
-import { isLookLocked } from './lookLock'
+import { isLookLocked, resetLookLock } from './lookLock'
 
 /** First-person walk / look modes (WASD + Space jump + one-finger / left-drag look). Rotate is a separate auto-orbit. */
 const WALK_MODES = new Set(['fixed', 'play'])
@@ -59,6 +59,11 @@ function CameraRig({
   const lookTarget = useRef(new THREE.Vector3())
   const orbitDesired = useRef(new THREE.Vector3())
 
+  // Clear look-lock when leaving play so grabs can't leave look stuck.
+  useEffect(() => {
+    if (mode !== 'play') resetLookLock()
+  }, [mode])
+
   // Seed walk pose when entering a walk mode.
   useEffect(() => {
     if (!WALK_MODES.has(mode)) return
@@ -71,7 +76,11 @@ function CameraRig({
     const dir = new THREE.Vector3()
     camera.getWorldDirection(dir)
     yawRef.current = Math.atan2(-dir.x, -dir.z)
-    pitchRef.current = Math.asin(THREE.MathUtils.clamp(dir.y, -1, 1))
+    pitchRef.current = THREE.MathUtils.clamp(
+      Math.asin(THREE.MathUtils.clamp(dir.y, -1, 1)),
+      -PITCH_LIMIT,
+      PITCH_LIMIT,
+    )
   }, [mode, camera])
 
   // Seed auto-orbit angle from the current camera when entering rotate.
@@ -112,16 +121,24 @@ function CameraRig({
     const onKeyUp = (event) => {
       keysRef.current.delete(event.key.toLowerCase())
     }
-    const onBlur = () => {
+    const clearInput = () => {
       keysRef.current.clear()
       jumpQueuedRef.current = false
       stopLooking()
+    }
+    const onBlur = () => {
+      clearInput()
+    }
+    const onVisibilityChange = () => {
+      if (document.hidden) clearInput()
     }
 
     const canvas = gl.domElement
     const previousTouchAction = canvas.style.touchAction
     // Prevent browser pan/zoom from eating one-finger look drags.
     canvas.style.touchAction = 'none'
+
+    const lookSensitivity = LOOK_SENSITIVITY * (reducedMotion ? 0.5 : 1)
 
     const onPointerDown = (event) => {
       // Primary (left / one-finger) or secondary (right) starts look.
@@ -142,6 +159,9 @@ function CameraRig({
     const onPointerUp = (event) => {
       stopLooking(event.pointerId)
     }
+    const onLostPointerCapture = (event) => {
+      if (lookingRef.current) stopLooking(event.pointerId)
+    }
     const onPointerMove = (event) => {
       if (!lookingRef.current) return
       if (lookPointerIdRef.current != null && event.pointerId !== lookPointerIdRef.current) return
@@ -149,8 +169,8 @@ function CameraRig({
         stopLooking(event.pointerId)
         return
       }
-      yawRef.current -= event.movementX * LOOK_SENSITIVITY
-      pitchRef.current -= event.movementY * LOOK_SENSITIVITY
+      yawRef.current -= event.movementX * lookSensitivity
+      pitchRef.current -= event.movementY * lookSensitivity
       pitchRef.current = THREE.MathUtils.clamp(pitchRef.current, -PITCH_LIMIT, PITCH_LIMIT)
     }
     const onContextMenu = (event) => {
@@ -160,8 +180,10 @@ function CameraRig({
     window.addEventListener('keydown', onKeyDown)
     window.addEventListener('keyup', onKeyUp)
     window.addEventListener('blur', onBlur)
+    document.addEventListener('visibilitychange', onVisibilityChange)
     canvas.addEventListener('pointerdown', onPointerDown)
     canvas.addEventListener('contextmenu', onContextMenu)
+    canvas.addEventListener('lostpointercapture', onLostPointerCapture)
     window.addEventListener('pointerup', onPointerUp)
     window.addEventListener('pointercancel', onPointerUp)
     window.addEventListener('pointermove', onPointerMove)
@@ -170,8 +192,10 @@ function CameraRig({
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('keyup', onKeyUp)
       window.removeEventListener('blur', onBlur)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
       canvas.removeEventListener('pointerdown', onPointerDown)
       canvas.removeEventListener('contextmenu', onContextMenu)
+      canvas.removeEventListener('lostpointercapture', onLostPointerCapture)
       window.removeEventListener('pointerup', onPointerUp)
       window.removeEventListener('pointercancel', onPointerUp)
       window.removeEventListener('pointermove', onPointerMove)
@@ -180,7 +204,7 @@ function CameraRig({
       lookingRef.current = false
       lookPointerIdRef.current = null
     }
-  }, [mode, gl])
+  }, [mode, gl, reducedMotion])
 
   // When the library list selects a book, gently face / approach it.
   useEffect(() => {
@@ -212,7 +236,8 @@ function CameraRig({
       desired = target.clone().addScaledVector(away, 4.2)
       desired.y = EYE_HEIGHT
     }
-    positionRef.current.lerp(desired, 0.85)
+    // Softer approach under reduced motion.
+    positionRef.current.lerp(desired, reducedMotion ? 0.35 : 0.85)
     positionRef.current.y = EYE_HEIGHT
     verticalVelocityRef.current = 0
     jumpQueuedRef.current = false
@@ -224,16 +249,21 @@ function CameraRig({
       -PITCH_LIMIT,
       PITCH_LIMIT,
     )
-  }, [focusPoint, mode])
+  }, [focusPoint, mode, reducedMotion])
 
   useFrame((_, delta) => {
+    const dt = Math.min(delta, 0.05)
+    // Soften camera follow rates when reduced motion is preferred.
+    const followRate = reducedMotion ? 1.2 : 2.5
+    const orbitFollowRate = reducedMotion ? 1.5 : 3
+
     if (mode === 'arrange') {
       if (controls) {
         // OrbitControls owns arrange framing.
         return
       }
-      camera.position.lerp(ARRANGE_POSITION, Math.min(1, delta * 2.5))
-      lookTarget.current.lerp(ARRANGE_TARGET, Math.min(1, delta * 2.5))
+      camera.position.lerp(ARRANGE_POSITION, Math.min(1, dt * followRate))
+      lookTarget.current.lerp(ARRANGE_TARGET, Math.min(1, dt * followRate))
       camera.lookAt(lookTarget.current)
       return
     }
@@ -245,18 +275,19 @@ function CameraRig({
 
     if (mode === 'rotate') {
       if (!reducedMotion) {
-        angleRef.current += delta * ROTATE_SPEED
+        angleRef.current += dt * ROTATE_SPEED
       }
       orbitDesired.current.set(
         ROTATE_TARGET.x + Math.cos(angleRef.current) * ROTATE_RADIUS,
         ROTATE_HEIGHT,
         ROTATE_TARGET.z + Math.sin(angleRef.current) * ROTATE_RADIUS,
       )
-      camera.position.lerp(orbitDesired.current, Math.min(1, delta * 3))
+      camera.position.lerp(orbitDesired.current, Math.min(1, dt * orbitFollowRate))
       camera.lookAt(ROTATE_TARGET)
+      // Keep OrbitControls target in sync without update() — update() would
+      // rewrite camera pose from its spherical state and fight the orbit rig.
       if (controls) {
-        controls.target.lerp(ROTATE_TARGET, Math.min(1, delta * 3))
-        controls.update()
+        controls.target.copy(ROTATE_TARGET)
       }
       return
     }
@@ -280,7 +311,7 @@ function CameraRig({
     if (keys.has('a')) wish.current.sub(right.current)
     if (keys.has('d')) wish.current.add(right.current)
     if (wish.current.lengthSq() > 1e-6) {
-      wish.current.normalize().multiplyScalar(MOVE_SPEED * (reducedMotion ? 0.65 : 1) * delta)
+      wish.current.normalize().multiplyScalar(MOVE_SPEED * (reducedMotion ? 0.65 : 1) * dt)
       positionRef.current.add(wish.current)
     }
 
@@ -293,15 +324,15 @@ function CameraRig({
       jumpQueuedRef.current = false
     }
     if (!grounded || verticalVelocityRef.current > 0) {
-      verticalVelocityRef.current -= GRAVITY * delta
-      positionRef.current.y += verticalVelocityRef.current * delta
+      verticalVelocityRef.current -= GRAVITY * dt
+      positionRef.current.y += verticalVelocityRef.current * dt
     }
     if (positionRef.current.y <= EYE_HEIGHT) {
       positionRef.current.y = EYE_HEIGHT
       verticalVelocityRef.current = 0
     }
 
-    // Soft room bounds on the walk plane.
+    // Soft room bounds on the walk plane only — no mesh collision against shelves/books.
     positionRef.current.x = THREE.MathUtils.clamp(positionRef.current.x, -40, 40)
     positionRef.current.z = THREE.MathUtils.clamp(positionRef.current.z, -40, 40)
 

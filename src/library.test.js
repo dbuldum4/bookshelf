@@ -1,30 +1,41 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   addEmptyShelf,
+  applyRoomPreset,
   applyShelfTransform,
   booksFitOnShelf,
   booksOnShelf,
   bookWorldFocusPosition,
   buildShelfBooks,
   buildShelfCaseLayout,
+  clampShelvesToRoom,
   computeLibraryStats,
   createDefaultShelf,
   createLibrary,
   createLibraryState,
+  createShelf,
   DEFAULT_SHELF_ID,
   deleteEmptyShelf,
+  dismissLibraryBackupReminder,
   ensureLibraryCapacity,
   loadLibrary,
   loadLibraryState,
+  markLibraryBackupDone,
+  mergeBookRecords,
+  mergeLibraryStates,
+  mergeNotes,
   normalizeLibraryState,
   parseLibraryCsv,
   parseLibraryFile,
   parseLibraryImport,
   reorderBookOnShelf,
+  ROOM_LAYOUT_BOUND,
+  sanitizeCoverUrl,
   saveLibrary,
   saveLibraryState,
   SHELF_ROWS_MAX,
   SHELF_WIDTH_MAX,
+  shouldRemindLibraryBackup,
   sortLibrary,
   tryReorderBookOnShelf,
 } from './library'
@@ -99,6 +110,105 @@ describe('library persistence', () => {
 
     expect(loadLibrary()).toHaveLength(createLibrary().length)
     expect(saveLibrary([])).toBe(false)
+  })
+
+  it('does not fall through to v2 when v3 key exists but is corrupt', () => {
+    storage.values.set('bookshelf-library-v3', '{not-json')
+    storage.values.set('bookshelf-library-v2', JSON.stringify([
+      { id: 'from-v2', title: 'Should Not Load', author: 'A', status: 'Reading' },
+    ]))
+
+    const state = loadLibraryState()
+    expect(state.books.some((book) => book.id === 'from-v2')).toBe(false)
+    expect(state.books).toHaveLength(createLibrary().length)
+  })
+
+  it('does not fall through to v2 when v3 is valid JSON with a corrupt shape', () => {
+    storage.values.set('bookshelf-library-v3', JSON.stringify({ books: 'nope' }))
+    storage.values.set('bookshelf-library-v2', JSON.stringify([
+      { id: 'from-v2', title: 'Should Not Load', author: 'A' },
+    ]))
+
+    const state = loadLibraryState()
+    expect(state.books.some((book) => book.id === 'from-v2')).toBe(false)
+    expect(state.books).toHaveLength(createLibrary().length)
+  })
+
+  it('clears legacy storage keys after a successful v3 save', () => {
+    storage.values.set('bookshelf-library-v2', '[]')
+    storage.values.set('bookshelf-library-v1', '[]')
+
+    expect(saveLibraryState({
+      books: [{ id: 'a', title: 'A', author: 'B' }],
+      shelves: [createDefaultShelf()],
+    })).toBe(true)
+
+    expect(storage.removeItem).toHaveBeenCalledWith('bookshelf-library-v2')
+    expect(storage.removeItem).toHaveBeenCalledWith('bookshelf-library-v1')
+    expect(storage.values.has('bookshelf-library-v2')).toBe(false)
+    expect(storage.values.has('bookshelf-library-v1')).toBe(false)
+    expect(storage.values.has('bookshelf-library-v3')).toBe(true)
+  })
+
+  it('preserves existing shelves when saveLibrary is given a books array', () => {
+    const customShelf = createDefaultShelf({ id: 'fiction', name: 'Fiction', x: 9 })
+    saveLibraryState({
+      books: [{ id: 'a', title: 'A', author: 'B', shelfId: 'fiction' }],
+      shelves: [createDefaultShelf(), customShelf],
+    })
+
+    expect(saveLibrary([{ id: 'b', title: 'B', author: 'C', shelfId: DEFAULT_SHELF_ID }])).toBe(true)
+    const loaded = loadLibraryState()
+    expect(loaded.books).toHaveLength(1)
+    expect(loaded.books[0].title).toBe('B')
+    expect(loaded.shelves.map((shelf) => shelf.id)).toEqual([DEFAULT_SHELF_ID, 'fiction'])
+  })
+})
+
+describe('normalize and sanitize', () => {
+  it('sanitizes cover URLs to https covers.openlibrary.org only', () => {
+    expect(sanitizeCoverUrl('https://covers.openlibrary.org/b/id/1-M.jpg'))
+      .toBe('https://covers.openlibrary.org/b/id/1-M.jpg')
+    expect(sanitizeCoverUrl('http://covers.openlibrary.org/b/id/1-M.jpg')).toBe('')
+    expect(sanitizeCoverUrl('https://evil.example/cover.jpg')).toBe('')
+    expect(sanitizeCoverUrl('javascript:alert(1)')).toBe('')
+    expect(sanitizeCoverUrl('')).toBe('')
+    expect(sanitizeCoverUrl(null)).toBe('')
+  })
+
+  it('dedupes book IDs in normalizeLibraryState', () => {
+    const state = normalizeLibraryState({
+      books: [
+        { id: 'same', title: 'First', author: 'A' },
+        { id: 'same', title: 'Second', author: 'B' },
+        { id: 'unique', title: 'Third', author: 'C' },
+      ],
+      shelves: [createDefaultShelf()],
+    })
+
+    const ids = state.books.map((book) => book.id)
+    expect(new Set(ids).size).toBe(3)
+    expect(ids[0]).toBe('same')
+    expect(ids[1]).not.toBe('same')
+    expect(ids[2]).toBe('unique')
+  })
+
+  it('coerces numeric ISBNs from JSON import', () => {
+    const result = parseLibraryImport(JSON.stringify([
+      { title: 'Dune', author: 'Frank Herbert', isbn: 9780441172719 },
+    ]))
+    expect(result.books[0].isbn).toBe('9780441172719')
+  })
+
+  it('rejects non-openlibrary cover URLs when normalizing imported books', () => {
+    const result = parseLibraryImport(JSON.stringify([
+      {
+        title: 'A',
+        author: 'B',
+        coverUrl: 'https://evil.example/x.jpg',
+      },
+    ]))
+    expect(result.books[0].coverUrl).toBe('')
   })
 })
 
@@ -354,6 +464,21 @@ describe('csv and json import', () => {
       'Want to Read',
       'Want to Read',
     ])
+    // Exclusive shelf tokens are not stored as free-form tags.
+    expect(result.books[0].tags).toEqual(['fantasy'])
+    expect(result.books[1].tags).toEqual(['favorites'])
+    expect(result.books[2].tags).toEqual(['tbr'])
+    expect(result.books[3].tags).toEqual(['sci-fi', 'classics'])
+  })
+
+  it('parses page counts with thousands separators', () => {
+    const csv = [
+      'Title,Author,Number of Pages',
+      '"Long Book","A","1,024"',
+    ].join('\n')
+
+    const result = parseLibraryCsv(csv)
+    expect(result.books[0].pageCount).toBe(1024)
   })
 
   it('prefers Exclusive Shelf over Bookshelves for status', () => {
@@ -380,5 +505,242 @@ describe('csv and json import', () => {
     expect(result.books[1].isbn).toBe('')
     expect(result.books[2].isbn).toBe('')
     expect(result.books[3].isbn).toBe('')
+  })
+})
+
+describe('merge import', () => {
+  it('updates matched books and appends new ones', () => {
+    const current = normalizeLibraryState({
+      books: [
+        {
+          id: 'keep-me',
+          title: 'Dune',
+          author: 'Frank Herbert',
+          status: 'Want to Read',
+          notes: 'Mine',
+          isbn: '9780441172719',
+          shelfId: DEFAULT_SHELF_ID,
+        },
+      ],
+      shelves: [createDefaultShelf()],
+    })
+    const incoming = normalizeLibraryState({
+      books: [
+        {
+          id: 'other-id',
+          title: 'Dune',
+          author: 'Frank Herbert',
+          status: 'Finished',
+          notes: '',
+          rating: 5,
+          isbn: '9780441172719',
+          shelfId: DEFAULT_SHELF_ID,
+        },
+        {
+          id: 'new-book',
+          title: 'Neuromancer',
+          author: 'William Gibson',
+          status: 'Reading',
+          shelfId: DEFAULT_SHELF_ID,
+        },
+      ],
+      shelves: [createDefaultShelf()],
+    })
+
+    const result = mergeLibraryStates(current, incoming)
+    expect(result.added).toBe(1)
+    expect(result.updated).toBe(1)
+    expect(result.total).toBe(2)
+    const dune = result.books.find((book) => book.id === 'keep-me')
+    expect(dune.status).toBe('Finished')
+    expect(dune.rating).toBe(5)
+    expect(dune.notes).toBe('Mine')
+    expect(result.books.some((book) => book.title === 'Neuromancer')).toBe(true)
+  })
+
+  it('adds unknown shelves from the import', () => {
+    const current = createLibraryState()
+    const extra = createShelf({ id: 'sci-fi', name: 'Sci-Fi', x: 12, z: 0 }, 1)
+    const incoming = {
+      books: [{ id: 'a', title: 'A', author: 'B', shelfId: 'sci-fi' }],
+      shelves: [createDefaultShelf(), extra],
+    }
+    const result = mergeLibraryStates(current, incoming)
+    expect(result.shelves.some((shelf) => shelf.id === 'sci-fi')).toBe(true)
+    expect(result.books.some((book) => book.shelfId === 'sci-fi' && book.title === 'A')).toBe(true)
+  })
+
+  it('reindexes ISBN after match-by-id so later rows do not duplicate', () => {
+    const current = normalizeLibraryState({
+      books: [{
+        id: 'keep',
+        title: 'Dune',
+        author: 'Frank Herbert',
+        isbn: '',
+        shelfId: DEFAULT_SHELF_ID,
+      }],
+      shelves: [createDefaultShelf()],
+    })
+    const incoming = normalizeLibraryState({
+      books: [
+        {
+          id: 'keep',
+          title: 'Dune',
+          author: 'Frank Herbert',
+          isbn: '9780441172719',
+          shelfId: DEFAULT_SHELF_ID,
+        },
+        {
+          id: 'dup-row',
+          title: 'Dune (alt)',
+          author: 'Someone Else',
+          isbn: '9780441172719',
+          rating: 4,
+          shelfId: DEFAULT_SHELF_ID,
+        },
+      ],
+      shelves: [createDefaultShelf()],
+    })
+    const result = mergeLibraryStates(current, incoming)
+    expect(result.books.filter((book) => book.isbn === '9780441172719')).toHaveLength(1)
+    expect(result.updated).toBe(2)
+    expect(result.added).toBe(0)
+    expect(result.books.find((book) => book.id === 'keep').rating).toBe(4)
+  })
+
+  it('appends differing notes instead of dropping import text', () => {
+    expect(mergeNotes('Local note', 'Imported note')).toContain('Local note')
+    expect(mergeNotes('Local note', 'Imported note')).toContain('Imported note')
+    expect(mergeNotes('Same', 'Same')).toBe('Same')
+    const merged = mergeBookRecords(
+      { id: '1', title: 'T', author: 'A', notes: 'Mine', shelfId: DEFAULT_SHELF_ID },
+      { id: '1', title: 'T', author: 'A', notes: 'Theirs', shelfId: DEFAULT_SHELF_ID },
+    )
+    expect(merged.notes).toContain('Mine')
+    expect(merged.notes).toContain('Theirs')
+  })
+
+  it('caps long title, tags, and quotes on normalize', () => {
+    const long = 'x'.repeat(2000)
+    const state = normalizeLibraryState({
+      books: [{
+        id: long,
+        title: long,
+        author: long,
+        tags: Array.from({ length: 80 }, (_, i) => `tag-${i}-${long}`),
+        quotes: Array.from({ length: 80 }, () => long),
+        notes: long + long,
+        shelfId: DEFAULT_SHELF_ID,
+      }],
+      shelves: [createDefaultShelf()],
+    })
+    const book = state.books[0]
+    expect(book.id.length).toBeLessThanOrEqual(120)
+    expect(book.title.length).toBeLessThanOrEqual(500)
+    expect(book.author.length).toBeLessThanOrEqual(500)
+    expect(book.tags.length).toBeLessThanOrEqual(40)
+    expect(book.quotes.length).toBeLessThanOrEqual(50)
+    expect(book.notes.length).toBeLessThanOrEqual(20000)
+  })
+})
+
+describe('backup reminders', () => {
+  let storage
+
+  beforeEach(() => {
+    storage = makeStorage()
+    vi.stubGlobal('window', { localStorage: storage })
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('reminds when there are books and no backup yet', () => {
+    expect(shouldRemindLibraryBackup({ bookCount: 3, now: 1_000_000 })).toBe(true)
+    expect(shouldRemindLibraryBackup({ bookCount: 0, now: 1_000_000 })).toBe(false)
+  })
+
+  it('stops reminding after backup or dismiss', () => {
+    const now = Date.parse('2026-07-16T12:00:00.000Z')
+    markLibraryBackupDone(now)
+    expect(shouldRemindLibraryBackup({ bookCount: 5, now })).toBe(false)
+    expect(shouldRemindLibraryBackup({
+      bookCount: 5,
+      now: now + 8 * 24 * 60 * 60 * 1000,
+    })).toBe(true)
+
+    dismissLibraryBackupReminder(7, now + 8 * 24 * 60 * 60 * 1000)
+    expect(shouldRemindLibraryBackup({
+      bookCount: 5,
+      now: now + 8 * 24 * 60 * 60 * 1000,
+    })).toBe(false)
+  })
+})
+
+describe('room presets', () => {
+  it('lays shelves along a wall and preserves book membership', () => {
+    const shelves = [
+      createDefaultShelf(),
+      createShelf({ id: 'b', name: 'B', width: 5 }, 1),
+      createShelf({ id: 'c', name: 'C', width: 5 }, 2),
+    ]
+    const books = [
+      { id: '1', title: 'One', author: 'A', shelfId: DEFAULT_SHELF_ID },
+      { id: '2', title: 'Two', author: 'A', shelfId: 'b' },
+    ]
+    const result = applyRoomPreset({ books, shelves }, 'wall')
+    expect(result.ok).toBe(true)
+    expect(result.shelves).toHaveLength(3)
+    expect(result.shelves.every((shelf) => shelf.z === -2 && shelf.yaw === 0)).toBe(true)
+    expect(result.books.map((book) => book.shelfId)).toEqual([DEFAULT_SHELF_ID, 'b'])
+    // Spaced left-to-right without overlap centers.
+    const xs = result.shelves.map((shelf) => shelf.x)
+    expect(xs[0]).toBeLessThan(xs[1])
+    expect(xs[1]).toBeLessThan(xs[2])
+  })
+
+  it('builds an L-shape with a right wing for extra cases', () => {
+    const shelves = [
+      createDefaultShelf(),
+      createShelf({ id: 'b', name: 'B' }, 1),
+      createShelf({ id: 'c', name: 'C' }, 2),
+    ]
+    const result = applyRoomPreset({ books: [], shelves }, 'l-shape')
+    expect(result.ok).toBe(true)
+    const wing = result.shelves.filter((shelf) => Math.abs(shelf.yaw + Math.PI / 2) < 1e-6)
+    expect(wing.length).toBeGreaterThan(0)
+  })
+
+  it('gallery places facing rows when there are enough shelves', () => {
+    const shelves = [
+      createDefaultShelf(),
+      createShelf({ id: 'b', name: 'B' }, 1),
+      createShelf({ id: 'c', name: 'C' }, 2),
+      createShelf({ id: 'd', name: 'D' }, 3),
+    ]
+    const result = applyRoomPreset({ books: [], shelves }, 'gallery')
+    expect(result.ok).toBe(true)
+    expect(result.shelves.some((shelf) => shelf.yaw === 0)).toBe(true)
+    expect(result.shelves.some((shelf) => Math.abs(shelf.yaw - Math.PI) < 1e-6)).toBe(true)
+  })
+
+  it('scales oversized layouts into the walkable room', () => {
+    const shelves = Array.from({ length: 12 }, (_, index) => (
+      createShelf({ id: `s${index}`, name: `S${index}`, width: SHELF_WIDTH_MAX }, index)
+    ))
+    const result = applyRoomPreset({ books: [], shelves }, 'wall')
+    expect(result.ok).toBe(true)
+    expect(result.scaled).toBe(true)
+    for (const shelf of result.shelves) {
+      expect(Math.abs(shelf.x)).toBeLessThanOrEqual(ROOM_LAYOUT_BOUND + 1)
+      expect(Math.abs(shelf.z)).toBeLessThanOrEqual(ROOM_LAYOUT_BOUND + 1)
+    }
+    const clamped = clampShelvesToRoom([
+      { id: 'far', name: 'Far', x: 200, z: 200, yaw: 0, width: 8, rows: 4 },
+    ])
+    expect(clamped.adjusted).toBe(true)
+    expect(Math.abs(clamped.shelves[0].x)).toBeLessThan(ROOM_LAYOUT_BOUND)
+    expect(Math.abs(clamped.shelves[0].z)).toBeLessThan(ROOM_LAYOUT_BOUND)
   })
 })

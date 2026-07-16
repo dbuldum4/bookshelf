@@ -1,17 +1,23 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas, useThree } from '@react-three/fiber'
 import BookDetails from './components/BookDetails'
 import Controls from './components/Controls'
+import ErrorBoundary from './components/ErrorBoundary'
 import LibraryPanel from './components/LibraryPanel'
 import SettingsPanel from './components/SettingsPanel'
 import WebGLFallback from './components/WebGLFallback'
 import {
   DEFAULT_GRAPHICS_QUALITY,
   getGraphicsPreset,
+  loadGalaxyMode,
   loadGraphicsQuality,
+  loadReducedMotionPreference,
+  saveGalaxyMode,
   saveGraphicsQuality,
+  saveReducedMotionPreference,
 } from './graphicsQuality'
 import {
+  applyRoomPreset,
   applyShelfTransform,
   assignBookToShelf,
   booksFitOnShelf,
@@ -21,9 +27,13 @@ import {
   createShelf,
   DEFAULT_SHELF_ID,
   deleteEmptyShelf,
+  dismissLibraryBackupReminder,
+  downloadLibraryExport,
   ensureLibraryCapacity,
   loadLibraryState,
+  mergeLibraryStates,
   saveLibraryState,
+  shouldRemindLibraryBackup,
   tryReorderBookOnShelf,
 } from './library'
 import Scene from './scene/Scene'
@@ -80,8 +90,8 @@ function WebGLContextLossHandler({ onContextLost }) {
 
   useEffect(() => {
     const canvas = gl.domElement
-    const handleContextLost = (event) => {
-      event.preventDefault()
+    // Do not preventDefault — we abandon the context and show the fallback UI.
+    const handleContextLost = () => {
       onContextLost()
     }
 
@@ -90,6 +100,51 @@ function WebGLContextLossHandler({ onContextLost }) {
   }, [gl, onContextLost])
 
   return null
+}
+
+const sceneFallbackStyle = {
+  width: '100%',
+  height: '100%',
+  display: 'grid',
+  placeItems: 'center',
+  padding: 24,
+  color: '#fff',
+  background: 'radial-gradient(circle at top, #201447, #05010f 68%)',
+  fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+  textAlign: 'center',
+}
+
+function SceneErrorFallback({ reset }) {
+  return (
+    <div role="alert" style={sceneFallbackStyle}>
+      <div style={{ maxWidth: 420 }}>
+        <p style={{ margin: '0 0 8px', color: '#baa7ef', fontSize: 13, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase' }}>
+          3D scene paused
+        </p>
+        <h2 style={{ margin: '0 0 12px', fontFamily: 'Georgia, serif', fontSize: 26, fontWeight: 500 }}>
+          The bookshelf could not render
+        </h2>
+        <p style={{ margin: '0 0 18px', color: 'rgba(255,255,255,0.68)', lineHeight: 1.55, fontSize: 14 }}>
+          Your library panel still works. Try again, switch to Low graphics in Settings if it reappears, or export a backup.
+        </p>
+        <button
+          type="button"
+          onClick={reset}
+          style={{
+            border: '1px solid rgba(169,131,255,0.7)',
+            borderRadius: 10,
+            padding: '10px 16px',
+            color: '#fff',
+            background: 'rgba(126,91,226,0.82)',
+            cursor: 'pointer',
+            font: '600 14px inherit',
+          }}
+        >
+          Retry scene
+        </button>
+      </div>
+    </div>
+  )
 }
 
 export default function App() {
@@ -103,13 +158,18 @@ export default function App() {
     }
   }
 
+  const storedMotionPreference = useRef(loadReducedMotionPreference()).current
   const [webGLAvailable, setWebGLAvailable] = useState(isWebGLAvailable)
   const [mode, setMode] = useState('fixed')
   const [resetKey, setResetKey] = useState(0)
-  const [galaxyMode, setGalaxyMode] = useState('realistic')
+  const [galaxyMode, setGalaxyMode] = useState(loadGalaxyMode)
   const [graphicsQuality, setGraphicsQuality] = useState(loadGraphicsQuality)
-  const [reducedMotion, setReducedMotion] = useState(prefersReducedMotion)
-  const [reducedMotionUserOverride, setReducedMotionUserOverride] = useState(false)
+  const [reducedMotion, setReducedMotion] = useState(() => (
+    storedMotionPreference != null ? storedMotionPreference : prefersReducedMotion()
+  ))
+  const [reducedMotionUserOverride, setReducedMotionUserOverride] = useState(
+    () => storedMotionPreference != null
+  )
   const [libraryState, setLibraryState] = useState(() => initialLibraryRef.current.libraryState)
   const [selectedBookId, setSelectedBookId] = useState(null)
   const [selectedShelfId, setSelectedShelfId] = useState(
@@ -117,6 +177,9 @@ export default function App() {
   )
   const [statusMessage, setStatusMessage] = useState('')
   const [focusPoint, setFocusPoint] = useState(null)
+  const [backupReminder, setBackupReminder] = useState(false)
+  const libraryRef = useRef(libraryState.books)
+  libraryRef.current = libraryState.books
 
   const library = libraryState.books
   const shelves = libraryState.shelves
@@ -128,7 +191,13 @@ export default function App() {
   )
 
   useEffect(() => {
-    saveLibraryState(libraryState)
+    if (!saveLibraryState(libraryState)) {
+      setStatusMessage('Could not save library to this browser. Storage may be full or disabled.')
+    }
+  }, [libraryState])
+
+  useEffect(() => {
+    setBackupReminder(shouldRemindLibraryBackup({ bookCount: libraryState.books.length }))
   }, [libraryState])
 
   useEffect(() => {
@@ -136,8 +205,12 @@ export default function App() {
   }, [graphicsQuality])
 
   useEffect(() => {
-    if (mode === 'play') setSelectedBookId(null)
-  }, [mode])
+    saveGalaxyMode(galaxyMode)
+  }, [galaxyMode])
+
+  useEffect(() => {
+    if (mode === 'play' && selectedBookId != null) setSelectedBookId(null)
+  }, [mode, selectedBookId])
 
   useEffect(() => {
     if (selectedBookId == null && focusPoint != null) setFocusPoint(null)
@@ -149,8 +222,8 @@ export default function App() {
     }
   }, [shelves, selectedShelfId])
 
-  // Keep selection focus synchronized with physical layout changes. This
-  // covers shelf moves/resizes, reorders, and moving the selected book.
+  // Keep focus synchronized with layout changes. Shelf selection is set only
+  // on explicit book select so Arrange drag/resize does not steal the shelf.
   useEffect(() => {
     if (selectedBookId == null) return
     const currentBook = library.find((book) => book.id === selectedBookId)
@@ -161,9 +234,6 @@ export default function App() {
     }
 
     const nextFocus = bookWorldFocusPosition(currentBook, library, shelves)
-    if (currentBook.shelfId) {
-      setSelectedShelfId((current) => (current === currentBook.shelfId ? current : currentBook.shelfId))
-    }
     setFocusPoint((current) => (
       focusPointsEqual(current, nextFocus) ? current : nextFocus
     ))
@@ -185,6 +255,7 @@ export default function App() {
   const setReducedMotionPreference = (value) => {
     setReducedMotionUserOverride(true)
     setReducedMotion(value)
+    saveReducedMotionPreference(value)
   }
 
   const flashStatus = useCallback((message) => {
@@ -196,12 +267,13 @@ export default function App() {
       setSelectedBookId(null)
       return
     }
+    if (mode === 'play') return
     const book = library.find((entry) => entry.id === id)
     if (!book) return
     setSelectedBookId(id)
     if (book.shelfId) setSelectedShelfId(book.shelfId)
     setFocusPoint(bookWorldFocusPosition(book, library, shelves))
-  }, [library, shelves])
+  }, [library, mode, shelves])
 
   const moveBookSelection = useCallback((delta) => {
     if (!library.length || mode === 'play' || mode === 'arrange') return
@@ -231,6 +303,7 @@ export default function App() {
       if (event.key === 'Escape') {
         if (event.defaultPrevented) return
         if (document.querySelector('[data-modal="true"], [aria-modal="true"]')) return
+        if (isTypingTarget(event.target)) return
         if (selectedBookId) setSelectedBookId(null)
         return
       }
@@ -265,12 +338,13 @@ export default function App() {
       hasAnnouncedSelection.current = true
       return
     }
+    const book = libraryRef.current.find((entry) => entry.id === selectedBookId)
     setSelectionAnnouncement(
-      selectedBook
-        ? `Selected ${selectedBook.title}${selectedBook.author ? ` by ${selectedBook.author}` : ''}`
+      book
+        ? `Selected ${book.title}${book.author ? ` by ${book.author}` : ''}`
         : 'No book selected',
     )
-  }, [selectedBook, selectedBookId])
+  }, [selectedBookId])
 
   const updateSelectedBook = (updates) => {
     if (updates.shelfId && updates.shelfId !== selectedBook?.shelfId) {
@@ -282,17 +356,25 @@ export default function App() {
         return
       }
       const { shelfId: _shelfId, ...rest } = updates
+      let assignFailed = null
       setLibraryState((state) => {
         const liveTarget = state.shelves.find((shelf) => shelf.id === updates.shelfId)
-        if (!liveTarget) return state
+        if (!liveTarget) {
+          assignFailed = 'That shelf is no longer available.'
+          return state
+        }
         const result = assignBookToShelf(state.books, selectedBookId, updates.shelfId, liveTarget)
-        if (!result.ok) return state
+        if (!result.ok) {
+          assignFailed = result.reason
+          return state
+        }
         const books = result.books.map((book) => {
           if (book.id !== selectedBookId) return book
           return applyBookFieldUpdates(book, rest)
         })
         return { ...state, books }
       })
+      if (assignFailed) flashStatus(assignFailed)
       return
     }
 
@@ -306,8 +388,14 @@ export default function App() {
   }
 
   const addBook = (draft) => {
-    const requestedShelfId = draft.shelfId || selectedShelfId || shelves[0]?.id || DEFAULT_SHELF_ID
-    const shelf = shelves.find((entry) => entry.id === requestedShelfId) || shelves[0]
+    if (mode === 'play') {
+      flashStatus('Leave Play mode to add or select books.')
+      return false
+    }
+
+    // Create the book outside setState so ids stay pure under StrictMode.
+    const preferredShelfId = draft.shelfId || selectedShelfId || shelves[0]?.id || DEFAULT_SHELF_ID
+    const shelf = shelves.find((entry) => entry.id === preferredShelfId) || shelves[0]
     const shelfId = shelf?.id || DEFAULT_SHELF_ID
     const provisional = createBook({ ...draft, shelfId }, library.length, shelfId)
     const onShelf = [...booksOnShelf(library, shelfId), provisional]
@@ -315,12 +403,22 @@ export default function App() {
       flashStatus('That shelf is full. Free space, pick another shelf, or resize it in Arrange mode.')
       return false
     }
-    setLibraryState((state) => ({
-      ...state,
-      books: [...state.books, provisional],
-    }))
+
+    setLibraryState((state) => {
+      const liveShelf = state.shelves.find((entry) => entry.id === provisional.shelfId)
+        || state.shelves[0]
+      if (!liveShelf) return state
+      const book = provisional.shelfId === liveShelf.id
+        ? provisional
+        : { ...provisional, shelfId: liveShelf.id }
+      const members = [...booksOnShelf(state.books, book.shelfId), book]
+      if (!booksFitOnShelf(members, liveShelf)) return state
+      if (state.books.some((entry) => entry.id === book.id)) return state
+      return { ...state, books: [...state.books, book] }
+    })
+
     setSelectedBookId(provisional.id)
-    setSelectedShelfId(shelfId)
+    setSelectedShelfId(provisional.shelfId)
     setFocusPoint(bookWorldFocusPosition(provisional, [...library, provisional], shelves))
     return true
   }
@@ -346,6 +444,61 @@ export default function App() {
     setSelectedBookId(null)
     setSelectedShelfId(fitted.shelves[0]?.id || DEFAULT_SHELF_ID)
     if (fitted.message) flashStatus(fitted.message)
+  }
+
+  const mergeLibrary = (next) => {
+    const incoming = {
+      books: Array.isArray(next?.books) ? next.books : Array.isArray(next) ? next : [],
+      shelves: Array.isArray(next?.shelves) && next.shelves.length ? next.shelves : shelves,
+    }
+    const result = mergeLibraryStates(libraryState, incoming)
+    setLibraryState({ books: result.books, shelves: result.shelves })
+    setSelectedBookId(null)
+    setSelectedShelfId((current) => (
+      result.shelves.some((shelf) => shelf.id === current)
+        ? current
+        : (result.shelves[0]?.id || DEFAULT_SHELF_ID)
+    ))
+    if (result.message) flashStatus(result.message)
+    return result
+  }
+
+  const handleApplyRoomPreset = (presetId) => {
+    const result = applyRoomPreset(libraryState, presetId)
+    if (!result.ok) {
+      flashStatus(result.reason)
+      return
+    }
+    setLibraryState({ books: result.books, shelves: result.shelves })
+    setMode('arrange')
+    flashStatus(
+      result.adjusted
+        ? 'Room layout applied and fitted to the walkable room. Drag cases to fine-tune.'
+        : 'Room layout applied. Drag cases to fine-tune.',
+    )
+  }
+
+  const handleBackupExport = () => {
+    try {
+      if (!library.length) {
+        flashStatus('Add at least one book before exporting.')
+        return
+      }
+      const { count, filename } = downloadLibraryExport({ books: library, shelves })
+      setBackupReminder(false)
+      flashStatus(`Exported ${count} book${count === 1 ? '' : 's'} to ${filename}.`)
+    } catch (error) {
+      flashStatus(error instanceof Error ? error.message : 'Could not export your library.')
+    }
+  }
+
+  const handleBackupDismiss = () => {
+    dismissLibraryBackupReminder()
+    setBackupReminder(false)
+  }
+
+  const handleBackupExported = () => {
+    setBackupReminder(false)
   }
 
   const renameShelf = (shelfId, name) => {
@@ -457,39 +610,43 @@ export default function App() {
       style={{ width: '100vw', height: '100vh', background: '#05010f' }}
     >
       {webGLAvailable ? (
-        <Canvas
-          key={graphicsQuality}
-          shadows={graphics.shadows}
-          camera={{ position: [0, 1.95, 11], fov: 55 }}
-          dpr={graphics.dpr}
-          gl={{ antialias: graphics.antialias }}
-          onCreated={({ gl }) => {
-            const canvas = gl.domElement
-            canvas.tabIndex = 0
-            canvas.setAttribute('role', 'application')
-            canvas.setAttribute(
-              'aria-label',
-              '3D library. WASD to walk, Space to jump, drag to look around. Arrow keys move between books. Escape clears selection. Use Arrange mode to place shelves.',
-            )
-          }}
-        >
-          <WebGLContextLossHandler onContextLost={handleWebGLContextLost} />
-          <Scene
-            mode={mode}
-            resetKey={resetKey}
-            galaxyMode={galaxyMode}
-            graphics={graphics}
-            reducedMotion={reducedMotion}
-            library={library}
-            shelves={shelves}
-            selectedBookId={selectedBookId}
-            onSelectBook={selectBook}
-            selectedShelfId={selectedShelfId}
-            onSelectShelf={setSelectedShelfId}
-            onMoveShelf={moveShelf}
-            focusPoint={focusPoint}
-          />
-        </Canvas>
+        <ErrorBoundary fallback={({ reset }) => <SceneErrorFallback reset={reset} />}>
+          <Canvas
+            key={graphicsQuality}
+            shadows={graphics.shadows}
+            camera={{ position: [0, 1.95, 11], fov: 55 }}
+            dpr={graphics.dpr}
+            gl={{ antialias: graphics.antialias }}
+            onCreated={({ gl }) => {
+              const canvas = gl.domElement
+              canvas.tabIndex = 0
+              canvas.setAttribute('role', 'application')
+              canvas.setAttribute(
+                'aria-label',
+                '3D library. WASD to walk, Space to jump, drag to look around. Arrow keys move between books. Escape clears selection. Use Arrange mode to place shelves.',
+              )
+            }}
+          >
+            <WebGLContextLossHandler onContextLost={handleWebGLContextLost} />
+            <Suspense fallback={null}>
+              <Scene
+                mode={mode}
+                resetKey={resetKey}
+                galaxyMode={galaxyMode}
+                graphics={graphics}
+                reducedMotion={reducedMotion}
+                library={library}
+                shelves={shelves}
+                selectedBookId={selectedBookId}
+                onSelectBook={selectBook}
+                selectedShelfId={selectedShelfId}
+                onSelectShelf={setSelectedShelfId}
+                onMoveShelf={moveShelf}
+                focusPoint={focusPoint}
+              />
+            </Suspense>
+          </Canvas>
+        </ErrorBoundary>
       ) : (
         <WebGLFallback onRetry={retryWebGL} />
       )}
@@ -504,7 +661,7 @@ export default function App() {
           style={{
             position: 'absolute',
             left: '50%',
-            bottom: 88,
+            bottom: backupReminder ? 148 : 88,
             transform: 'translateX(-50%)',
             zIndex: 30,
             maxWidth: 'min(440px, calc(100vw - 32px))',
@@ -523,6 +680,67 @@ export default function App() {
         </div>
       )}
 
+      {backupReminder && (
+        <div
+          role="status"
+          style={{
+            position: 'absolute',
+            left: '50%',
+            bottom: 24,
+            transform: 'translateX(-50%)',
+            zIndex: 32,
+            maxWidth: 'min(480px, calc(100vw - 32px))',
+            padding: '12px 14px',
+            borderRadius: 14,
+            color: '#fff',
+            background: 'rgba(20, 18, 35, 0.94)',
+            border: '1px solid rgba(169,131,255,0.45)',
+            boxShadow: '0 12px 40px rgba(0,0,0,0.45)',
+            fontSize: 13,
+            fontWeight: 500,
+            display: 'flex',
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 10,
+          }}
+        >
+          <span style={{ lineHeight: 1.4, textAlign: 'center' }}>
+            Backup reminder: export a JSON copy of your library to keep it safe.
+          </span>
+          <button
+            type="button"
+            onClick={handleBackupExport}
+            style={{
+              border: '1px solid rgba(169,131,255,0.7)',
+              borderRadius: 9,
+              padding: '7px 12px',
+              color: '#fff',
+              background: 'rgba(126,91,226,0.82)',
+              cursor: 'pointer',
+              font: '600 12px inherit',
+            }}
+          >
+            Export backup
+          </button>
+          <button
+            type="button"
+            onClick={handleBackupDismiss}
+            style={{
+              border: '1px solid rgba(255,255,255,0.16)',
+              borderRadius: 9,
+              padding: '7px 12px',
+              color: 'rgba(255,255,255,0.85)',
+              background: 'rgba(255,255,255,0.08)',
+              cursor: 'pointer',
+              font: '600 12px inherit',
+            }}
+          >
+            Not now
+          </button>
+        </div>
+      )}
+
       {webGLAvailable && (
         <>
           <Controls
@@ -538,6 +756,7 @@ export default function App() {
             onTransformShelf={transformShelf}
             onAddShelf={handleAddShelf}
             onDeleteShelf={handleDeleteShelf}
+            onApplyRoomPreset={handleApplyRoomPreset}
             books={library}
           />
           <SettingsPanel
@@ -559,6 +778,8 @@ export default function App() {
         onSelectShelf={setSelectedShelfId}
         onAddBook={addBook}
         onReplaceLibrary={replaceLibrary}
+        onMergeLibrary={mergeLibrary}
+        onBackupExported={handleBackupExported}
         onReorderBook={handleReorderBook}
       />
       <BookDetails
@@ -573,17 +794,24 @@ export default function App() {
   )
 }
 
+const MAX_UNKNOWN_PAGE = 100_000
+
 function applyBookFieldUpdates(book, updates) {
   const next = { ...book, ...updates }
   if (updates.status === 'Reading' && !book.startedAt) next.startedAt = today()
   if (updates.status === 'Finished' && !book.finishedAt) next.finishedAt = today()
   if (updates.pageCount !== undefined) {
     next.pageCount = Math.max(0, Number(updates.pageCount) || 0)
-    next.currentPage = Math.min(Number(next.currentPage) || 0, next.pageCount || Number.MAX_SAFE_INTEGER)
+    const currentPage = Math.max(0, Number(next.currentPage) || 0)
+    next.currentPage = next.pageCount
+      ? Math.min(currentPage, next.pageCount)
+      : Math.min(currentPage, MAX_UNKNOWN_PAGE)
   }
   if (updates.currentPage !== undefined) {
     const currentPage = Math.max(0, Number(updates.currentPage) || 0)
-    next.currentPage = next.pageCount ? Math.min(currentPage, next.pageCount) : currentPage
+    next.currentPage = next.pageCount
+      ? Math.min(currentPage, next.pageCount)
+      : Math.min(currentPage, MAX_UNKNOWN_PAGE)
   }
   return next
 }

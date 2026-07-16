@@ -69,6 +69,35 @@ function formatPages(count) {
   return new Intl.NumberFormat().format(count || 0)
 }
 
+const MAX_IMPORT_BYTES = 5_000_000
+
+function CoverThumb({ coverUrl, color }) {
+  const [failed, setFailed] = useState(false)
+  if (!coverUrl || failed) {
+    return (
+      <span
+        aria-hidden="true"
+        style={{
+          width: 28,
+          height: 40,
+          flexShrink: 0,
+          borderRadius: 3,
+          background: color,
+          boxShadow: 'inset -4px 0 rgba(0,0,0,0.25)',
+        }}
+      />
+    )
+  }
+  return (
+    <img
+      src={coverUrl}
+      alt=""
+      onError={() => setFailed(true)}
+      style={{ width: 28, height: 40, objectFit: 'cover', borderRadius: 3, background: color }}
+    />
+  )
+}
+
 function LibraryPanel({
   library,
   shelves = [],
@@ -78,7 +107,9 @@ function LibraryPanel({
   onSelectShelf,
   onAddBook,
   onReplaceLibrary,
+  onMergeLibrary,
   onReorderBook,
+  onBackupExported,
 }) {
   const [open, setOpen] = useState(true)
   const [adding, setAdding] = useState(false)
@@ -100,9 +131,12 @@ function LibraryPanel({
   const [transferMessage, setTransferMessage] = useState('')
   const [transferError, setTransferError] = useState('')
   const [importing, setImporting] = useState(false)
+  /** Pending parsed import awaiting Merge / Replace / Cancel. */
+  const [pendingImport, setPendingImport] = useState(null)
   const blurTimer = useRef(null)
   const importInputRef = useRef(null)
   const transferTimer = useRef(null)
+  const isbnRequestId = useRef(0)
 
   const clearTransferFeedback = () => {
     setTransferMessage('')
@@ -195,7 +229,7 @@ function LibraryPanel({
     const filtered = library.filter((book) => {
       const matchesStatus = status === 'All' || book.status === status
       const matchesShelf = shelfFilter === 'All' || book.shelfId === shelfFilter
-      const matchesAuthor = authorFilter === 'All' || book.author === authorFilter
+      const matchesAuthor = authorFilter === 'All' || (book.author || '').trim() === authorFilter
       const matchesTag = tagFilter === 'All' || (book.tags || []).includes(tagFilter)
       const matchesRating = ratingFilter === 'All'
         || (ratingFilter === '0' ? !book.rating : book.rating >= Number(ratingFilter))
@@ -262,6 +296,7 @@ function LibraryPanel({
         return
       }
       const { count, filename } = downloadLibraryExport({ books: library, shelves })
+      onBackupExported?.()
       showTransferFeedback(`Exported ${count} book${count === 1 ? '' : 's'} to ${filename}.`)
     } catch (error) {
       showTransferFeedback(error instanceof Error ? error.message : 'Could not export your library.', true)
@@ -270,7 +305,43 @@ function LibraryPanel({
 
   const openImportPicker = () => {
     clearTransferFeedback()
+    setPendingImport(null)
     importInputRef.current?.click()
+  }
+
+  const cancelPendingImport = () => {
+    setPendingImport(null)
+    showTransferFeedback('Import cancelled. Your library was not changed.')
+  }
+
+  const confirmMergeImport = () => {
+    if (!pendingImport) return
+    const { payload, count, fileName } = pendingImport
+    const result = onMergeLibrary?.(payload)
+    setPendingImport(null)
+    if (result && typeof result === 'object') {
+      const { added = 0, updated = 0 } = result
+      showTransferFeedback(
+        `Merged import: ${added} added, ${updated} updated (${result.total ?? library.length + added} total).`,
+      )
+    } else {
+      showTransferFeedback(`Merged ${count} book${count === 1 ? '' : 's'} from ${fileName}.`)
+    }
+  }
+
+  const confirmReplaceImport = () => {
+    if (!pendingImport) return
+    const { payload, count, fileName } = pendingImport
+    const confirmed = window.confirm(
+      `Replace your entire library (${library.length} book${library.length === 1 ? '' : 's'}) `
+      + `with ${count} imported book${count === 1 ? '' : 's'}?\n\n`
+      + 'This cannot be undone unless you export a backup first.\n\n'
+      + 'OK = Replace · Cancel = keep this import choice open.',
+    )
+    if (!confirmed) return
+    onReplaceLibrary(payload)
+    setPendingImport(null)
+    showTransferFeedback(`Replaced library with ${count} book${count === 1 ? '' : 's'} from ${fileName}.`)
   }
 
   const importLibrary = async (event) => {
@@ -280,20 +351,31 @@ function LibraryPanel({
 
     setImporting(true)
     clearTransferFeedback()
+    setPendingImport(null)
     try {
+      if (file.size > MAX_IMPORT_BYTES) {
+        showTransferFeedback('That file is too large to import (max 5 MB). Export a smaller backup or split the library.', true)
+        return
+      }
       const text = await file.text()
       const parsed = parseLibraryFile(text, file.name)
       const { books, count, format } = parsed
       const kind = format === 'csv' ? 'CSV' : 'JSON'
-      const confirmed = window.confirm(
-        `Replace your current library (${library.length} book${library.length === 1 ? '' : 's'}) with ${count} imported book${count === 1 ? '' : 's'} from ${kind}?\n\nThis cannot be undone unless you export a backup first.`
-      )
-      if (!confirmed) {
-        showTransferFeedback('Import cancelled. Your library was not changed.')
+      const payload = { books, shelves: parsed.shelves }
+
+      // Empty library: always load directly.
+      if (!library.length) {
+        onReplaceLibrary(payload)
+        showTransferFeedback(`Imported ${count} book${count === 1 ? '' : 's'} from ${file.name}.`)
         return
       }
-      onReplaceLibrary({ books, shelves: parsed.shelves })
-      showTransferFeedback(`Imported ${count} book${count === 1 ? '' : 's'} from ${file.name}.`)
+
+      setPendingImport({
+        payload,
+        count,
+        kind,
+        fileName: file.name,
+      })
     } catch (error) {
       showTransferFeedback(error instanceof Error ? error.message : 'Could not import that library file.', true)
     } finally {
@@ -337,24 +419,29 @@ function LibraryPanel({
     setShowSuggestions(true)
   }
 
-  const blurTitle = () => {
+  const blurTitle = (event) => {
+    const next = event.relatedTarget
+    if (next && event.currentTarget.parentElement?.contains(next)) return
     if (blurTimer.current !== null) window.clearTimeout(blurTimer.current)
     blurTimer.current = window.setTimeout(() => {
       setShowSuggestions(false)
       blurTimer.current = null
-    }, 100)
+    }, 150)
   }
 
   const findByIsbn = async () => {
+    const requestId = ++isbnRequestId.current
     setLookingUp(true)
     setLookupError('')
     try {
       const result = await lookupBookByIsbn(draft.isbn)
+      if (requestId !== isbnRequestId.current) return
       setDraft((current) => ({ ...current, ...result }))
     } catch (error) {
+      if (requestId !== isbnRequestId.current) return
       setLookupError(error instanceof Error ? error.message : 'Could not look up that ISBN.')
     } finally {
-      setLookingUp(false)
+      if (requestId === isbnRequestId.current) setLookingUp(false)
     }
   }
 
@@ -583,7 +670,7 @@ function LibraryPanel({
           onClick={openImportPicker}
           disabled={importing}
           style={{ ...actionButton(), flex: 1, opacity: importing ? 0.45 : 1 }}
-          title="Import Bookshelf JSON or a Goodreads CSV export"
+          title="Import Bookshelf JSON or Goodreads CSV — merge or replace"
         >
           {importing ? 'Importing…' : 'Import'}
         </button>
@@ -596,6 +683,43 @@ function LibraryPanel({
           style={{ display: 'none' }}
         />
       </div>
+
+      {pendingImport && (
+        <div
+          role="region"
+          aria-label="Choose import mode"
+          style={{
+            margin: '0 16px 10px',
+            padding: '10px 12px',
+            borderRadius: 10,
+            color: '#fff',
+            background: 'rgba(126, 91, 226, 0.16)',
+            border: '1px solid rgba(169, 131, 255, 0.35)',
+            fontSize: 12,
+            lineHeight: 1.4,
+          }}
+        >
+          <p style={{ margin: '0 0 8px' }}>
+            Import <strong>{pendingImport.count}</strong> book{pendingImport.count === 1 ? '' : 's'} from{' '}
+            {pendingImport.kind} (<span style={{ wordBreak: 'break-all' }}>{pendingImport.fileName}</span>)
+            into your library of {library.length}.
+          </p>
+          <p style={{ margin: '0 0 10px', color: 'rgba(255,255,255,0.62)', fontSize: 11 }}>
+            Merge matches by id, ISBN, or title + author. Replace discards your current library.
+          </p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            <button type="button" onClick={confirmMergeImport} style={actionButton(true)}>
+              Merge
+            </button>
+            <button type="button" onClick={confirmReplaceImport} style={actionButton()}>
+              Replace…
+            </button>
+            <button type="button" onClick={cancelPendingImport} style={actionButton()}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {(transferMessage || transferError) && (
         <p
@@ -734,6 +858,17 @@ function LibraryPanel({
         role="listbox"
         aria-label="Library books"
         aria-activedescendant={selectedBookId ? `library-book-${selectedBookId}` : undefined}
+        tabIndex={visibleBooks.length ? 0 : undefined}
+        onKeyDown={(event) => {
+          if (!visibleBooks.length || !onSelectBook) return
+          if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+          event.preventDefault()
+          const currentIndex = Math.max(0, visibleBooks.findIndex((book) => book.id === selectedBookId))
+          const delta = event.key === 'ArrowDown' ? 1 : -1
+          const nextIndex = Math.min(visibleBooks.length - 1, Math.max(0, currentIndex + delta))
+          const nextBook = visibleBooks[nextIndex]
+          if (nextBook) onSelectBook(nextBook.id)
+        }}
         style={{ overflowY: 'auto', padding: '0 10px 10px' }}
       >
         {visibleBooks.map((book) => {
@@ -764,6 +899,16 @@ function LibraryPanel({
                 aria-label={label}
                 tabIndex={selected || (!selectedBookId && book.id === visibleBooks[0]?.id) ? 0 : -1}
                 onClick={() => onSelectBook(book.id)}
+                onKeyDown={(event) => {
+                  if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+                  event.preventDefault()
+                  const currentIndex = visibleBooks.findIndex((item) => item.id === book.id)
+                  if (currentIndex < 0) return
+                  const delta = event.key === 'ArrowDown' ? 1 : -1
+                  const nextIndex = Math.min(visibleBooks.length - 1, Math.max(0, currentIndex + delta))
+                  const nextBook = visibleBooks[nextIndex]
+                  if (nextBook) onSelectBook(nextBook.id)
+                }}
                 style={{
                   minWidth: 0,
                   flex: 1,
@@ -779,11 +924,7 @@ function LibraryPanel({
                   textAlign: 'left',
                 }}
               >
-                {book.coverUrl ? (
-                  <img src={book.coverUrl} alt="" style={{ width: 28, height: 40, objectFit: 'cover', borderRadius: 3, background: book.color }} />
-                ) : (
-                  <span aria-hidden="true" style={{ width: 28, height: 40, flexShrink: 0, borderRadius: 3, background: book.color, boxShadow: `inset -4px 0 rgba(0,0,0,0.25)` }} />
-                )}
+                <CoverThumb coverUrl={book.coverUrl} color={book.color} />
                 <span style={{ minWidth: 0, flex: 1 }} aria-hidden="true">
                   <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13, fontWeight: 700 }}>{book.title}</span>
                   <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2, color: 'rgba(255,255,255,0.52)', fontSize: 11 }}>
@@ -840,7 +981,9 @@ function LibraryPanel({
         })}
         {!visibleBooks.length && (
           <p style={{ padding: '22px 8px', margin: 0, color: 'rgba(255,255,255,0.5)', fontSize: 13, textAlign: 'center' }}>
-            No books match those filters.
+            {library.length === 0
+              ? 'No books yet. Add a book to get started.'
+              : 'No books match those filters.'}
           </p>
         )}
       </div>

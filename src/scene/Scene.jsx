@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { ContactShadows, Environment, Float, OrbitControls } from '@react-three/drei'
 import { Physics } from '@react-three/rapier'
 import { DEFAULT_GRAPHICS_QUALITY, getGraphicsPreset } from '../graphicsQuality'
@@ -12,6 +12,7 @@ const GALAXY_BACKDROP_SCALE = [0.46, 0.46, 0.46]
 
 const ARRANGE_TARGET = [0, 1.5, 0]
 const ORBIT_TARGET = [0, 0.5, 0]
+const ROTATE_TARGET = [0, 1.5, 0]
 
 const NEBULA_LAYERS = [
   {
@@ -87,12 +88,22 @@ function Scene({
 
   // Seed orbit target once per mode change so continuous re-renders (shelf
   // drags) do not yank the pan target back to room center every frame.
+  // Only call controls.update() for orbit modes (custom/arrange); CameraRig
+  // owns the camera in fixed/play/rotate.
   useEffect(() => {
     const controls = controlsRef.current
     if (!controls) return
-    const target = mode === 'arrange' ? ARRANGE_TARGET : ORBIT_TARGET
-    controls.target.set(target[0], target[1], target[2])
-    controls.update()
+    if (mode === 'arrange') {
+      controls.target.set(...ARRANGE_TARGET)
+      controls.update()
+    } else if (mode === 'custom') {
+      controls.target.set(...ORBIT_TARGET)
+      controls.update()
+    } else if (mode === 'rotate') {
+      controls.target.set(...ROTATE_TARGET)
+      // do NOT call controls.update() — CameraRig drives camera
+    }
+    // fixed/play: do not call update()
   }, [mode])
 
   return (
@@ -114,7 +125,7 @@ function Scene({
       <pointLight position={[-6, 4, 6]} intensity={0.6} color="#9bb8ff" />
       <pointLight position={[0, 8, -4]} intensity={0.4} color="#ffb86b" />
 
-      <DeepSpaceStars graphics={graphics} />
+      <DeepSpaceStars graphics={graphics} reducedMotion={reducedMotion} />
 
       {nebulaLayers.map((layer) => (
         <NebulaLayer
@@ -134,17 +145,23 @@ function Scene({
         rotation={GALAXY_BACKDROP_ROTATION}
         scale={GALAXY_BACKDROP_SCALE}
       >
-        {pixelatedGalaxy ? <Galaxy graphics={graphics} /> : <RealisticGalaxy graphics={graphics} />}
+        {pixelatedGalaxy ? (
+          <Galaxy graphics={graphics} reducedMotion={reducedMotion} />
+        ) : (
+          <RealisticGalaxy graphics={graphics} reducedMotion={reducedMotion} />
+        )}
       </group>
 
       {mode === 'play' ? (
-        <Physics key={resetKey} gravity={[0, -9.81, 0]} timeStep="vary">
-          <Bookshelf
-            mode={mode}
-            library={library}
-            shelves={shelves}
-          />
-        </Physics>
+        <Suspense fallback={null}>
+          <Physics key={resetKey} gravity={[0, -9.81, 0]} timeStep={1 / 60}>
+            <Bookshelf
+              mode={mode}
+              library={library}
+              shelves={shelves}
+            />
+          </Physics>
+        </Suspense>
       ) : floatRoom ? (
         <Float speed={1.2} rotationIntensity={0.05} floatIntensity={0.15}>
           {room}
@@ -163,7 +180,11 @@ function Scene({
         />
       )}
 
-      {graphics.environment && <Environment preset="night" />}
+      {graphics.environment && (
+        <Suspense fallback={null}>
+          <Environment preset="night" />
+        </Suspense>
+      )}
 
       <CameraRig mode={mode} reducedMotion={reducedMotion} focusPoint={focusPoint} />
       <OrbitControls

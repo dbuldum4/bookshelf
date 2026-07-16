@@ -30,8 +30,9 @@ Personal Library v1 is complete. The next focus is making large libraries feel l
 2. **Portable library data**
    - Completed: export and import JSON.
    - Completed: Goodreads CSV import.
+   - Completed: merge import (id / ISBN / title+author) alongside replace.
+   - Completed: backup reminder after 7 days without export (dismissible).
    - Consider optional cloud sync later.
-   - Local-first durability (backup reminders, merge import) remains open.
 
 3. **Richer reading tracking**
    - Completed: star ratings, dates started and finished, page progress, tags, and notes.
@@ -78,6 +79,8 @@ Named cases live together in one walkable room. Books belong to exactly one shel
    - Dedicated **Arrange** mode (not Play) for placing cases; Walk/Play use WASD + drag-to-look.
    - Hard capacity: refuse shrink/add when books would not fit; no silent reflow.
    - Migration: existing libraries land on one default “Library” shelf.
+   - Completed: room presets (Wall, L-shape, Gallery) that reposition existing cases.
+   - Completed: 3D name plaques on each case.
 
 ### Out of scope (later)
 

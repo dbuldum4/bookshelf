@@ -89,16 +89,69 @@ function makeId(title, index) {
 }
 
 function asNumber(value, fallback = 0) {
+  if (typeof value === 'string') {
+    value = value.replace(/,/g, '').trim()
+  }
   const number = Number(value)
   return Number.isFinite(number) ? Math.max(0, Math.round(number)) : fallback
+}
+
+const ALLOWED_COVER_HOST = 'covers.openlibrary.org'
+const MAX_FIELD_LENGTH = 20000 // notes / quotes
+const MAX_SHORT_FIELD = 500
+const MAX_ID_LENGTH = 120
+const MAX_TAGS = 40
+const MAX_QUOTES = 50
+const MAX_BOOKS_IMPORT = 10000
+const MAX_CURRENT_PAGE_WITHOUT_COUNT = 100000
+const MAX_IMPORT_TEXT_LENGTH = 5_000_000
+/** Soft room AABB so presets stay inside CameraRig walk bounds (±40). */
+export const ROOM_LAYOUT_BOUND = 38
+
+export function sanitizeCoverUrl(url) {
+  if (typeof url !== 'string' || !url.trim()) return ''
+  try {
+    const u = new URL(url.trim())
+    if (u.protocol !== 'https:') return ''
+    if (u.hostname !== ALLOWED_COVER_HOST) return ''
+    return u.href
+  } catch {
+    return ''
+  }
+}
+
+function asStringField(value, maxLen = MAX_SHORT_FIELD) {
+  if (typeof value === 'number' && Number.isFinite(value)) value = String(value)
+  if (typeof value !== 'string') return ''
+  return value.slice(0, maxLen)
+}
+
+function asIsoDateString(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    try { return new Date(value).toISOString().slice(0, MAX_SHORT_FIELD) } catch { return '' }
+  }
+  if (typeof value !== 'string') return ''
+  // Keep free-form date strings for inputs, but bound length for storage safety.
+  return value.slice(0, MAX_SHORT_FIELD)
+}
+
+function isValidColor(color) {
+  if (typeof color !== 'string' || !color.trim()) return false
+  const trimmed = color.trim()
+  // accept #rgb #rrggbb #rrggbbaa or simple css color names already in COLORS
+  if (/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(trimmed)) return true
+  if (COLORS.includes(trimmed) || COLORS.includes(color)) return true
+  // allow simple named colors used in app if any - otherwise reject empty
+  return /^[a-zA-Z]+$/.test(trimmed) && trimmed.length < 30
 }
 
 function normalizeTags(value) {
   const tags = Array.isArray(value) ? value : typeof value === 'string' ? value.split(',') : []
   return [...new Set(tags
     .filter((tag) => typeof tag === 'string')
-    .map((tag) => tag.trim())
+    .map((tag) => tag.trim().slice(0, MAX_SHORT_FIELD))
     .filter(Boolean))]
+    .slice(0, MAX_TAGS)
 }
 
 function normalizeQuotes(value) {
@@ -109,8 +162,9 @@ function normalizeQuotes(value) {
       : []
   return quotes
     .filter((quote) => typeof quote === 'string')
-    .map((quote) => quote.trim())
+    .map((quote) => quote.trim().slice(0, MAX_FIELD_LENGTH))
     .filter(Boolean)
+    .slice(0, MAX_QUOTES)
 }
 
 function clamp(value, min, max) {
@@ -181,25 +235,38 @@ function normalizeBook(value, index, defaultShelfId = DEFAULT_SHELF_ID) {
   const book = value && typeof value === 'object' ? value : {}
   const pageCount = asNumber(book.pageCount)
   const shelfId = typeof book.shelfId === 'string' && book.shelfId
-    ? book.shelfId
+    ? book.shelfId.slice(0, MAX_ID_LENGTH)
     : defaultShelfId
+  const pageCap = pageCount > 0 ? pageCount : MAX_CURRENT_PAGE_WITHOUT_COUNT
+  const rawIsbn = asStringField(book.isbn)
+  const cleanedIsbn = cleanIsbn(rawIsbn)
+  const isbn = cleanedIsbn && isValidIsbn(cleanedIsbn) ? cleanedIsbn : rawIsbn
+
+  const title = asStringField(book.title).trim() || 'Untitled book'
+  const author = asStringField(book.author).trim() || 'Unknown author'
+  const rawId = asStringField(book.id, MAX_ID_LENGTH).trim()
+  const id = rawId || makeId(title, index)
+
+  let createdAt = asIsoDateString(book.createdAt)
+  if (!createdAt) createdAt = new Date().toISOString()
+
   return {
-    id: typeof book.id === 'string' && book.id ? book.id : makeId(book.title, index),
-    title: typeof book.title === 'string' && book.title.trim() ? book.title.trim() : 'Untitled book',
-    author: typeof book.author === 'string' && book.author.trim() ? book.author.trim() : 'Unknown author',
-    color: typeof book.color === 'string' ? book.color : COLORS[index % COLORS.length],
+    id,
+    title,
+    author,
+    color: isValidColor(book.color) ? book.color.trim() : COLORS[index % COLORS.length],
     status: READING_STATUSES.includes(book.status) ? book.status : 'Want to Read',
-    notes: typeof book.notes === 'string' ? book.notes : '',
+    notes: typeof book.notes === 'string' ? book.notes.slice(0, MAX_FIELD_LENGTH) : '',
     rating: Math.min(5, asNumber(book.rating)),
-    currentPage: Math.min(asNumber(book.currentPage), pageCount || Number.MAX_SAFE_INTEGER),
+    currentPage: Math.min(asNumber(book.currentPage), pageCap),
     pageCount,
     tags: normalizeTags(book.tags),
     quotes: normalizeQuotes(book.quotes),
-    startedAt: typeof book.startedAt === 'string' ? book.startedAt : '',
-    finishedAt: typeof book.finishedAt === 'string' ? book.finishedAt : '',
-    isbn: typeof book.isbn === 'string' ? book.isbn : '',
-    coverUrl: typeof book.coverUrl === 'string' ? book.coverUrl : '',
-    createdAt: typeof book.createdAt === 'string' ? book.createdAt : new Date().toISOString(),
+    startedAt: asIsoDateString(book.startedAt),
+    finishedAt: asIsoDateString(book.finishedAt),
+    isbn: isbn.slice(0, MAX_SHORT_FIELD),
+    coverUrl: sanitizeCoverUrl(book.coverUrl),
+    createdAt,
     shelfId,
   }
 }
@@ -256,10 +323,18 @@ export function normalizeLibraryState(state) {
   const shelfIds = new Set(shelves.map((shelf) => shelf.id))
   const fallbackId = shelves[0].id
   const rawBooks = Array.isArray(state?.books) ? state.books : Array.isArray(state) ? state : []
+  const seenIds = new Set()
   const books = rawBooks.map((book, index) => {
     const normalized = normalizeBook(book, index, fallbackId)
     if (!shelfIds.has(normalized.shelfId)) normalized.shelfId = fallbackId
-    return normalized
+    if (!seenIds.has(normalized.id)) {
+      seenIds.add(normalized.id)
+      return normalized
+    }
+    let id = makeId(normalized.title, index)
+    while (seenIds.has(id)) id = makeId(normalized.title, index + Math.random())
+    seenIds.add(id)
+    return { ...normalized, id }
   })
 
   return { books, shelves }
@@ -364,13 +439,30 @@ export function loadLibraryState() {
   const fallback = createLibraryState()
   if (typeof window === 'undefined') return fallback
 
-  const saved = readStoredJson(STORAGE_KEY)
-  if (saved && typeof saved === 'object' && !Array.isArray(saved) && Array.isArray(saved.books)) {
-    return finalizeLoadedState(saved)
+  let rawV3 = null
+  try {
+    rawV3 = window.localStorage.getItem(STORAGE_KEY)
+  } catch {
+    return fallback
   }
-  // v3 accidentally saved as bare books array
-  if (Array.isArray(saved)) return finalizeLoadedState(booksFromLegacyArray(saved))
 
+  // v3 key present — never fall through to legacy
+  if (rawV3 != null) {
+    let saved = null
+    try {
+      saved = JSON.parse(rawV3)
+    } catch {
+      return finalizeLoadedState(fallback)
+    }
+    if (Array.isArray(saved)) return finalizeLoadedState(booksFromLegacyArray(saved))
+    if (saved && typeof saved === 'object' && Array.isArray(saved.books)) {
+      return finalizeLoadedState(saved)
+    }
+    // corrupt shape
+    return finalizeLoadedState(fallback)
+  }
+
+  // no v3 — migrate legacy
   const v2 = readStoredJson(LEGACY_STORAGE_KEY_V2)
   if (Array.isArray(v2)) return finalizeLoadedState(booksFromLegacyArray(v2))
   if (v2 && typeof v2 === 'object' && Array.isArray(v2.books)) {
@@ -403,19 +495,42 @@ export function saveLibraryState(state) {
   try {
     const normalized = normalizeLibraryState(state)
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized))
+    try {
+      window.localStorage.removeItem(LEGACY_STORAGE_KEY_V2)
+      window.localStorage.removeItem(LEGACY_STORAGE_KEY_V1)
+    } catch {
+      // Legacy cleanup is best-effort; v3 write already succeeded.
+    }
     return true
   } catch {
     return false
   }
 }
 
+function readExistingShelves() {
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY)
+    if (!raw) return [createDefaultShelf()]
+    const data = JSON.parse(raw)
+    if (data && Array.isArray(data.shelves) && data.shelves.length) {
+      return data.shelves.map((shelf, index) => normalizeShelf(shelf, index))
+    }
+  } catch {
+    // fall through
+  }
+  return [createDefaultShelf()]
+}
+
 /** @deprecated Prefer saveLibraryState. Accepts a books array or full state. */
 export function saveLibrary(libraryOrState) {
   if (Array.isArray(libraryOrState)) {
-    return saveLibraryState({
-      books: libraryOrState,
-      shelves: [createDefaultShelf()],
-    })
+    let shelves = [createDefaultShelf()]
+    try {
+      if (typeof window !== 'undefined') shelves = readExistingShelves()
+    } catch {
+      // keep default shelf
+    }
+    return saveLibraryState({ books: libraryOrState, shelves })
   }
   return saveLibraryState(libraryOrState)
 }
@@ -523,6 +638,9 @@ export function parseLibraryImport(text) {
   if (typeof text !== 'string' || !text.trim()) {
     throw new Error('Choose a non-empty JSON file to import.')
   }
+  if (text.length > MAX_IMPORT_TEXT_LENGTH) {
+    throw new Error('That library file is too large to import.')
+  }
 
   let data
   try {
@@ -534,6 +652,9 @@ export function parseLibraryImport(text) {
   const extracted = extractImportedState(data)
   if (!extracted.books.length) {
     throw new Error('That library file does not contain any books.')
+  }
+  if (extracted.books.length > MAX_BOOKS_IMPORT) {
+    throw new Error(`Library imports are limited to ${MAX_BOOKS_IMPORT} books.`)
   }
 
   const shelves = (extracted.shelves && extracted.shelves.length
@@ -590,12 +711,392 @@ export function downloadLibraryExport(libraryOrState, filename) {
   anchor.click()
   anchor.remove()
   window.setTimeout(() => URL.revokeObjectURL(url), 0)
+  markLibraryBackupDone()
   const count = Array.isArray(libraryOrState)
     ? libraryOrState.length
     : Array.isArray(libraryOrState?.books)
       ? libraryOrState.books.length
       : 0
   return { filename: name, count }
+}
+
+/* ------------------------------------------------------------------ */
+/* Backup reminders                                                    */
+/* ------------------------------------------------------------------ */
+
+export const BACKUP_REMINDER_DAYS = 7
+export const BACKUP_STORAGE_KEY = 'bookshelf-last-backup-at'
+export const BACKUP_DISMISS_STORAGE_KEY = 'bookshelf-backup-dismissed-until'
+
+export function markLibraryBackupDone(now = Date.now()) {
+  if (typeof window === 'undefined') return false
+  try {
+    window.localStorage.setItem(BACKUP_STORAGE_KEY, new Date(now).toISOString())
+    window.localStorage.removeItem(BACKUP_DISMISS_STORAGE_KEY)
+    return true
+  } catch {
+    return false
+  }
+}
+
+export function dismissLibraryBackupReminder(days = BACKUP_REMINDER_DAYS, now = Date.now()) {
+  if (typeof window === 'undefined') return false
+  try {
+    const until = now + Math.max(1, days) * 24 * 60 * 60 * 1000
+    window.localStorage.setItem(BACKUP_DISMISS_STORAGE_KEY, new Date(until).toISOString())
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * True when the user has books and has not exported (or dismissed) recently.
+ * @param {{ bookCount?: number, now?: number, days?: number }} [options]
+ */
+export function shouldRemindLibraryBackup(options = {}) {
+  const bookCount = options.bookCount ?? 0
+  const now = options.now ?? Date.now()
+  const days = options.days ?? BACKUP_REMINDER_DAYS
+  if (!bookCount || typeof window === 'undefined') return false
+
+  try {
+    const dismissedUntil = Date.parse(window.localStorage.getItem(BACKUP_DISMISS_STORAGE_KEY) || '')
+    if (Number.isFinite(dismissedUntil) && now < dismissedUntil) return false
+
+    const lastRaw = window.localStorage.getItem(BACKUP_STORAGE_KEY)
+    if (!lastRaw) return true
+    const last = Date.parse(lastRaw)
+    if (!Number.isFinite(last)) return true
+    return now - last >= days * 24 * 60 * 60 * 1000
+  } catch {
+    return false
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Merge import                                                        */
+/* ------------------------------------------------------------------ */
+
+const STATUS_RANK = {
+  'Want to Read': 0,
+  Reading: 1,
+  Finished: 2,
+}
+
+function normalizeMatchKey(title, author) {
+  const clean = (value) => String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+  return `${clean(title)}|${clean(author)}`
+}
+
+function earlierIso(a, b) {
+  const ta = Date.parse(a || '')
+  const tb = Date.parse(b || '')
+  if (Number.isFinite(ta) && Number.isFinite(tb)) return ta <= tb ? a : b
+  if (Number.isFinite(ta)) return a
+  if (Number.isFinite(tb)) return b
+  return a || b || ''
+}
+
+function laterIso(a, b) {
+  const ta = Date.parse(a || '')
+  const tb = Date.parse(b || '')
+  if (Number.isFinite(ta) && Number.isFinite(tb)) return ta >= tb ? a : b
+  if (Number.isFinite(ta)) return a
+  if (Number.isFinite(tb)) return b
+  return a || b || ''
+}
+
+function preferNonEmpty(current, incoming) {
+  if (typeof current === 'string' && current.trim()) return current
+  if (typeof incoming === 'string' && incoming.trim()) return incoming
+  return current || incoming || ''
+}
+
+/**
+ * Merge notes without clobbering local text. If both differ, append import under a separator.
+ */
+export function mergeNotes(current, incoming) {
+  const a = typeof current === 'string' ? current.trim() : ''
+  const b = typeof incoming === 'string' ? incoming.trim() : ''
+  if (!a) return b.slice(0, MAX_FIELD_LENGTH)
+  if (!b) return a.slice(0, MAX_FIELD_LENGTH)
+  if (a === b || a.includes(b)) return a.slice(0, MAX_FIELD_LENGTH)
+  if (b.includes(a)) return b.slice(0, MAX_FIELD_LENGTH)
+  return `${a}\n\n---\n\n${b}`.slice(0, MAX_FIELD_LENGTH)
+}
+
+/** Merge two book records matched as the same edition. Keeps current id + shelf. */
+export function mergeBookRecords(current, incoming, index = 0) {
+  const left = normalizeBook(current, index)
+  const right = normalizeBook(incoming, index, left.shelfId)
+  const leftRank = STATUS_RANK[left.status] ?? 0
+  const rightRank = STATUS_RANK[right.status] ?? 0
+  const status = rightRank > leftRank ? right.status : left.status
+  const pageCount = Math.max(left.pageCount, right.pageCount)
+  let currentPage = Math.max(left.currentPage, right.currentPage)
+  if (pageCount > 0) currentPage = Math.min(currentPage, pageCount)
+  if (status === 'Finished' && pageCount > 0) currentPage = pageCount
+
+  return normalizeBook({
+    ...left,
+    title: preferNonEmpty(left.title, right.title),
+    author: preferNonEmpty(left.author, right.author),
+    notes: mergeNotes(left.notes, right.notes),
+    isbn: preferNonEmpty(left.isbn, right.isbn),
+    coverUrl: preferNonEmpty(left.coverUrl, right.coverUrl),
+    color: left.color || right.color,
+    status,
+    rating: Math.max(left.rating, right.rating),
+    pageCount,
+    currentPage,
+    tags: normalizeTags([...(left.tags || []), ...(right.tags || [])]),
+    quotes: normalizeQuotes([...(left.quotes || []), ...(right.quotes || [])]),
+    startedAt: earlierIso(left.startedAt, right.startedAt),
+    finishedAt: laterIso(left.finishedAt, right.finishedAt),
+    createdAt: earlierIso(left.createdAt, right.createdAt) || left.createdAt,
+    shelfId: left.shelfId,
+    id: left.id,
+  }, index, left.shelfId)
+}
+
+/**
+ * Merge an imported library into the current one.
+ * Matches books by id, then ISBN, then title+author. Adds new shelves by id.
+ *
+ * @returns {{ books, shelves, added, updated, total, message?: string, adjusted: boolean }}
+ */
+export function mergeLibraryStates(currentState, incomingState) {
+  const current = normalizeLibraryState(currentState)
+  const incoming = normalizeLibraryState(incomingState)
+
+  const shelves = current.shelves.map((shelf) => ({ ...shelf }))
+  const shelfIds = new Set(shelves.map((shelf) => shelf.id))
+  for (const shelf of incoming.shelves) {
+    if (shelfIds.has(shelf.id)) continue
+    shelves.push({ ...shelf })
+    shelfIds.add(shelf.id)
+  }
+
+  const books = current.books.map((book) => ({ ...book }))
+  const byId = new Map(books.map((book, index) => [book.id, index]))
+  const byIsbn = new Map()
+  const byTitleAuthor = new Map()
+  books.forEach((book, index) => {
+    if (book.isbn) byIsbn.set(book.isbn, index)
+    byTitleAuthor.set(normalizeMatchKey(book.title, book.author), index)
+  })
+
+  let added = 0
+  let updated = 0
+
+  for (const raw of incoming.books) {
+    const candidate = normalizeBook(raw, books.length, shelves[0]?.id || DEFAULT_SHELF_ID)
+    let matchIndex = byId.has(candidate.id) ? byId.get(candidate.id) : -1
+    if (matchIndex < 0 && candidate.isbn && byIsbn.has(candidate.isbn)) {
+      matchIndex = byIsbn.get(candidate.isbn)
+    }
+    if (matchIndex < 0) {
+      const key = normalizeMatchKey(candidate.title, candidate.author)
+      if (byTitleAuthor.has(key)) matchIndex = byTitleAuthor.get(key)
+    }
+
+    if (matchIndex >= 0) {
+      const merged = mergeBookRecords(books[matchIndex], candidate, matchIndex)
+      books[matchIndex] = merged
+      // Refresh indexes so later rows in this import can match newly filled ISBN/title.
+      byId.set(merged.id, matchIndex)
+      if (merged.isbn) byIsbn.set(merged.isbn, matchIndex)
+      byTitleAuthor.set(normalizeMatchKey(merged.title, merged.author), matchIndex)
+      updated += 1
+      continue
+    }
+
+    // Match phase already covers existing ids; new rows keep candidate.id.
+    let shelfId = candidate.shelfId
+    if (!shelfIds.has(shelfId)) shelfId = shelves[0]?.id || DEFAULT_SHELF_ID
+    const next = { ...candidate, shelfId }
+    books.push(next)
+    const newIndex = books.length - 1
+    byId.set(next.id, newIndex)
+    if (next.isbn) byIsbn.set(next.isbn, newIndex)
+    byTitleAuthor.set(normalizeMatchKey(next.title, next.author), newIndex)
+    added += 1
+  }
+
+  const fitted = ensureLibraryCapacity({ books, shelves })
+  return {
+    books: fitted.books,
+    shelves: fitted.shelves,
+    added,
+    updated,
+    total: fitted.books.length,
+    adjusted: fitted.adjusted,
+    message: fitted.message,
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Room presets (reposition existing cases; keeps ids / books)         */
+/* ------------------------------------------------------------------ */
+
+export const ROOM_PRESETS = [
+  {
+    id: 'wall',
+    label: 'Wall',
+    description: 'Cases side-by-side along the back wall',
+  },
+  {
+    id: 'l-shape',
+    label: 'L-shape',
+    description: 'Back wall plus a right-hand wing',
+  },
+  {
+    id: 'gallery',
+    label: 'Gallery',
+    description: 'Two facing rows with an aisle between',
+  },
+]
+
+const ROOM_PRESET_GAP = 1.15
+const CASE_DEPTH_HALF = 0.9
+
+function layoutShelvesInRow(shelves, { z, yaw, startX = null }) {
+  const total = shelves.reduce(
+    (sum, shelf, index) => sum + shelf.width + (index > 0 ? ROOM_PRESET_GAP : 0),
+    0,
+  )
+  let cursor = startX == null ? -total / 2 : startX
+  return shelves.map((shelf) => {
+    const next = {
+      ...shelf,
+      x: cursor + shelf.width / 2,
+      z,
+      yaw,
+    }
+    cursor += shelf.width + ROOM_PRESET_GAP
+    return next
+  })
+}
+
+/** Approximate world AABB extents for a yawed case, then fit inside walk bounds. */
+export function clampShelvesToRoom(shelves, bound = ROOM_LAYOUT_BOUND) {
+  const list = Array.isArray(shelves) ? shelves : []
+  if (!list.length) return { shelves: list, scaled: false, adjusted: false }
+
+  let minX = Infinity
+  let maxX = -Infinity
+  let minZ = Infinity
+  let maxZ = -Infinity
+
+  for (const shelf of list) {
+    const halfW = (shelf.width || DEFAULT_SHELF_WIDTH) / 2 + 0.4
+    const yaw = shelf.yaw || 0
+    const cos = Math.abs(Math.cos(yaw))
+    const sin = Math.abs(Math.sin(yaw))
+    const extX = halfW * cos + CASE_DEPTH_HALF * sin
+    const extZ = halfW * sin + CASE_DEPTH_HALF * cos
+    minX = Math.min(minX, shelf.x - extX)
+    maxX = Math.max(maxX, shelf.x + extX)
+    minZ = Math.min(minZ, shelf.z - extZ)
+    maxZ = Math.max(maxZ, shelf.z + extZ)
+  }
+
+  const spanX = Math.max(1e-6, maxX - minX)
+  const spanZ = Math.max(1e-6, maxZ - minZ)
+  const limit = bound * 2
+  let scale = 1
+  if (spanX > limit) scale = Math.min(scale, limit / spanX)
+  if (spanZ > limit) scale = Math.min(scale, limit / spanZ)
+
+  const outside = minX < -bound || maxX > bound || minZ < -bound || maxZ > bound
+  // Leave in-bounds layouts untouched (do not re-center a neat wall at z=-2).
+  if (scale >= 1 - 1e-9 && !outside) {
+    return { shelves: list, scaled: false, adjusted: false }
+  }
+
+  const cx = (minX + maxX) / 2
+  const cz = (minZ + maxZ) / 2
+  return {
+    shelves: list.map((shelf) => ({
+      ...shelf,
+      x: (shelf.x - cx) * scale,
+      z: (shelf.z - cz) * scale,
+    })),
+    scaled: scale < 1 - 1e-9,
+    adjusted: true,
+  }
+}
+
+/**
+ * Apply a room preset to shelf positions/yaws. Book membership is unchanged.
+ * @returns {{ ok: true, books, shelves, scaled?: boolean } | { ok: false, reason: string }}
+ */
+export function applyRoomPreset(state, presetId) {
+  const base = normalizeLibraryState(state)
+  if (!base.shelves.length) {
+    return { ok: false, reason: 'Add a shelf before applying a room layout.' }
+  }
+
+  const preset = ROOM_PRESETS.find((entry) => entry.id === presetId)
+  if (!preset) {
+    return { ok: false, reason: 'Unknown room layout.' }
+  }
+
+  let shelves
+  if (presetId === 'wall') {
+    shelves = layoutShelvesInRow(base.shelves, { z: -2, yaw: 0 })
+  } else if (presetId === 'l-shape') {
+    const split = Math.max(1, Math.ceil(base.shelves.length / 2))
+    const back = layoutShelvesInRow(base.shelves.slice(0, split), { z: -2, yaw: 0 })
+    // Right wall sits past the back row; cases face −X into the room.
+    const wingStartX = back.length
+      ? Math.max(...back.map((shelf) => shelf.x + shelf.width / 2)) + ROOM_PRESET_GAP + 1.2
+      : 6
+    const wing = base.shelves.slice(split)
+    // Local width maps to world Z when yaw = −π/2, so step along Z by width.
+    let zCursor = -2 + 1.6
+    const wingLaid = wing.map((shelf) => {
+      const next = {
+        ...shelf,
+        x: wingStartX,
+        z: zCursor + shelf.width / 2,
+        yaw: -Math.PI / 2,
+      }
+      zCursor += shelf.width + ROOM_PRESET_GAP
+      return next
+    })
+    shelves = [...back, ...wingLaid]
+  } else if (presetId === 'gallery') {
+    const left = []
+    const right = []
+    base.shelves.forEach((shelf, index) => {
+      if (index % 2 === 0) left.push(shelf)
+      else right.push(shelf)
+    })
+    if (!right.length && left.length > 1) {
+      right.push(left.pop())
+    }
+    const backRow = layoutShelvesInRow(left.length ? left : base.shelves, { z: -5, yaw: 0 })
+    const frontRow = layoutShelvesInRow(right, { z: 5, yaw: Math.PI })
+    shelves = [...backRow, ...frontRow]
+  } else {
+    return { ok: false, reason: 'Unknown room layout.' }
+  }
+
+  const fitted = clampShelvesToRoom(shelves)
+  return {
+    ok: true,
+    books: base.books,
+    shelves: fitted.shelves.map((shelf, index) => normalizeShelf(shelf, index)),
+    scaled: fitted.scaled,
+    adjusted: fitted.adjusted,
+  }
 }
 
 /** Parse a single CSV line with RFC 4180-style quoting. */
@@ -742,6 +1243,9 @@ export function parseLibraryCsv(text) {
   if (typeof text !== 'string' || !text.trim()) {
     throw new Error('Choose a non-empty CSV file to import.')
   }
+  if (text.length > MAX_IMPORT_TEXT_LENGTH) {
+    throw new Error('That library file is too large to import.')
+  }
 
   const rows = splitCsvRows(text.replace(/^\uFEFF/, ''))
   if (rows.length < 2) {
@@ -779,7 +1283,11 @@ export function parseLibraryCsv(text) {
     const notes = cell(row, ['my review', 'private notes', 'notes', 'review'])
     const shelves = cell(row, ['bookshelves', 'tags'])
     const tags = shelves
-      ? shelves.split(/[,;]/).map((tag) => tag.trim()).filter(Boolean)
+      ? shelves
+        .split(/[,;]/)
+        .map((tag) => tag.trim())
+        .filter(Boolean)
+        .filter((tag) => !matchGoodreadsShelf(tag))
       : []
 
     const draft = {
@@ -805,6 +1313,9 @@ export function parseLibraryCsv(text) {
 
   if (!books.length) {
     throw new Error('That CSV file does not contain any books.')
+  }
+  if (books.length > MAX_BOOKS_IMPORT) {
+    throw new Error(`Library imports are limited to ${MAX_BOOKS_IMPORT} books.`)
   }
 
   const shelves = [createDefaultShelf()]
@@ -832,6 +1343,9 @@ export function parseLibraryFile(text, filename = '') {
   const name = String(filename || '').toLowerCase()
   const trimmed = typeof text === 'string' ? text.trim() : ''
   if (!trimmed) throw new Error('Choose a non-empty library file to import.')
+  if (typeof text === 'string' && text.length > MAX_IMPORT_TEXT_LENGTH) {
+    throw new Error('That library file is too large to import.')
+  }
 
   if (name.endsWith('.csv') || (!name.endsWith('.json') && looksLikeCsv(trimmed))) {
     return parseLibraryCsv(text)
@@ -889,7 +1403,7 @@ export async function lookupBookByIsbn(value) {
   const book = await response.json()
   const authorNames = await Promise.all((book.authors || []).map(fetchAuthorName))
   const coverId = Array.isArray(book.covers)
-    ? book.covers.find((id) => Number.isInteger(id) && id > 0)
+    ? book.covers.map(Number).find((id) => Number.isInteger(id) && id > 0)
     : null
 
   return {
@@ -897,7 +1411,9 @@ export async function lookupBookByIsbn(value) {
     author: authorNames.filter(Boolean).join(', '),
     pageCount: asNumber(book.number_of_pages),
     isbn,
-    coverUrl: coverId ? `https://covers.openlibrary.org/b/id/${coverId}-M.jpg` : '',
+    coverUrl: coverId
+      ? `https://covers.openlibrary.org/b/id/${coverId}-M.jpg`
+      : `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg`,
   }
 }
 
@@ -918,6 +1434,7 @@ export async function searchAcclaimedBooks(value, signal) {
     .map((book, relevanceRank) => {
       const rating = Number(book.ratings_average) || 0
       const ratingsCount = asNumber(book.ratings_count)
+      const coverI = Number(book.cover_i)
       return {
         id: typeof book.key === 'string' ? book.key.replaceAll('/', '-') : `suggestion-${relevanceRank}`,
         title: typeof book.title === 'string' ? book.title : 'Untitled book',
@@ -925,8 +1442,8 @@ export async function searchAcclaimedBooks(value, signal) {
         firstPublishYear: asNumber(book.first_publish_year),
         rating,
         ratingsCount,
-        coverUrl: Number.isInteger(book.cover_i) && book.cover_i > 0
-          ? `https://covers.openlibrary.org/b/id/${book.cover_i}-M.jpg`
+        coverUrl: Number.isInteger(coverI) && coverI > 0
+          ? `https://covers.openlibrary.org/b/id/${coverI}-M.jpg`
           : '',
         acclaimScore: rating * Math.log10(ratingsCount + 1),
         relevanceRank,
@@ -991,9 +1508,14 @@ export function sortLibrary(books, sortBy = 'shelf') {
 }
 
 function yearFromDateString(value) {
-  if (typeof value !== 'string' || value.length < 4) return null
-  const year = Number(value.slice(0, 4))
-  return Number.isInteger(year) ? year : null
+  if (typeof value !== 'string' || !value) return null
+  const parsed = Date.parse(value)
+  if (Number.isFinite(parsed)) return new Date(parsed).getFullYear()
+  if (value.length >= 4) {
+    const year = Number(value.slice(0, 4))
+    return Number.isInteger(year) ? year : null
+  }
+  return null
 }
 
 /**

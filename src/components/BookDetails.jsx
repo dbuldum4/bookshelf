@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { READING_STATUSES } from '../library'
 
 const fontFamily =
@@ -24,6 +25,14 @@ const labelStyle = {
 }
 
 function BookDetails({ book, shelves = [], onUpdate, onDelete, onClose, onReorder }) {
+  const [tagsDraft, setTagsDraft] = useState(null) // null = not editing
+  const [coverFailed, setCoverFailed] = useState(false)
+
+  useEffect(() => {
+    setTagsDraft(null)
+    setCoverFailed(false)
+  }, [book?.id])
+
   if (!book) return null
 
   const progress = book.pageCount ? Math.min(100, Math.round((book.currentPage / book.pageCount) * 100)) : 0
@@ -85,8 +94,13 @@ function BookDetails({ book, shelves = [], onUpdate, onDelete, onClose, onReorde
       </button>
 
       <div style={{ display: 'flex', gap: 13, alignItems: 'flex-start', marginBottom: 18, paddingRight: 30 }}>
-        {book.coverUrl ? (
-          <img src={book.coverUrl} alt={`Cover of ${book.title}`} style={{ width: 52, height: 76, objectFit: 'cover', borderRadius: 5, background: book.color, boxShadow: '0 8px 20px rgba(0,0,0,0.3)' }} />
+        {book.coverUrl && !coverFailed ? (
+          <img
+            src={book.coverUrl}
+            alt={`Cover of ${book.title}`}
+            onError={() => setCoverFailed(true)}
+            style={{ width: 52, height: 76, objectFit: 'cover', borderRadius: 5, background: book.color, boxShadow: '0 8px 20px rgba(0,0,0,0.3)' }}
+          />
         ) : (
           <div aria-hidden="true" style={{ width: 12, height: 76, borderRadius: 5, background: book.color, boxShadow: `0 0 22px ${book.color}` }} />
         )}
@@ -105,7 +119,13 @@ function BookDetails({ book, shelves = [], onUpdate, onDelete, onClose, onReorde
         </div>
         <div>
           <label htmlFor="book-author" style={labelStyle}>Author</label>
-          <input id="book-author" value={book.author} onChange={(event) => onUpdate({ author: event.target.value })} style={{ ...fieldStyle, height: 40, padding: '0 11px' }} />
+          <input
+            id="book-author"
+            value={book.author}
+            onChange={(event) => onUpdate({ author: event.target.value })}
+            onBlur={(event) => onUpdate({ author: event.target.value.trim() })}
+            style={{ ...fieldStyle, height: 40, padding: '0 11px' }}
+          />
         </div>
         <div>
           <label htmlFor="book-status" style={labelStyle}>Reading status</label>
@@ -204,7 +224,19 @@ function BookDetails({ book, shelves = [], onUpdate, onDelete, onClose, onReorde
 
         <div>
           <label htmlFor="book-tags" style={labelStyle}>Tags</label>
-          <input id="book-tags" value={(book.tags || []).join(', ')} onChange={(event) => onUpdate({ tags: event.target.value.split(',').map((tag) => tag.trim()).filter(Boolean) })} placeholder="Classics, sci-fi, favorite" style={{ ...fieldStyle, height: 40, padding: '0 11px' }} />
+          <input
+            id="book-tags"
+            value={tagsDraft ?? (book.tags || []).join(', ')}
+            onFocus={() => setTagsDraft((book.tags || []).join(', '))}
+            onChange={(event) => setTagsDraft(event.target.value)}
+            onBlur={() => {
+              const tags = (tagsDraft ?? '').split(',').map((tag) => tag.trim()).filter(Boolean)
+              onUpdate({ tags })
+              setTagsDraft(null)
+            }}
+            placeholder="Classics, sci-fi, favorite"
+            style={{ ...fieldStyle, height: 40, padding: '0 11px' }}
+          />
         </div>
         <div>
           <label htmlFor="book-isbn" style={labelStyle}>ISBN</label>
@@ -276,7 +308,7 @@ function BookDetails({ book, shelves = [], onUpdate, onDelete, onClose, onReorde
       </div>
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginTop: 17 }}>
-        <p style={{ margin: 0, color: 'rgba(255,255,255,0.35)', fontSize: 11 }}>Changes are saved on this device.</p>
+        <p style={{ margin: 0, color: 'rgba(255,255,255,0.35)', fontSize: 11 }}>Edits update your local library on this device.</p>
         <button type="button" onClick={removeBook} style={{ border: '1px solid rgba(255,130,130,0.35)', borderRadius: 8, color: '#ffb3b3', background: 'rgba(255,80,80,0.09)', cursor: 'pointer', padding: '7px 9px', font: `600 11px ${fontFamily}`, whiteSpace: 'nowrap' }}>
           Remove book
         </button>

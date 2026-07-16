@@ -2,6 +2,11 @@ export const GRAPHICS_QUALITIES = ['low', 'medium', 'high']
 export const DEFAULT_GRAPHICS_QUALITY = 'medium'
 export const GRAPHICS_QUALITY_STORAGE_KEY = 'bookshelf-graphics-quality'
 
+export const GALAXY_MODES = ['realistic', 'pixelated']
+export const DEFAULT_GALAXY_MODE = 'realistic'
+export const GALAXY_MODE_STORAGE_KEY = 'bookshelf-galaxy-mode'
+export const REDUCED_MOTION_STORAGE_KEY = 'bookshelf-reduced-motion' // stores 'true' | 'false' when user override
+
 export const GRAPHICS_PRESETS = {
   low: {
     dpr: [1, 1],
@@ -101,6 +106,55 @@ export function saveGraphicsQuality(quality) {
   if (typeof window === 'undefined' || !isGraphicsQuality(quality)) return false
   try {
     window.localStorage.setItem(GRAPHICS_QUALITY_STORAGE_KEY, quality)
+    return true
+  } catch {
+    return false
+  }
+}
+
+export function isGalaxyMode(value) {
+  return GALAXY_MODES.includes(value)
+}
+
+export function loadGalaxyMode() {
+  if (typeof window === 'undefined') return DEFAULT_GALAXY_MODE
+  try {
+    const value = window.localStorage.getItem(GALAXY_MODE_STORAGE_KEY)
+    if (isGalaxyMode(value)) return value
+  } catch {}
+  return DEFAULT_GALAXY_MODE
+}
+
+export function saveGalaxyMode(mode) {
+  if (typeof window === 'undefined' || !isGalaxyMode(mode)) return false
+  try {
+    window.localStorage.setItem(GALAXY_MODE_STORAGE_KEY, mode)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** @returns {boolean | null} null = no user override (follow system) */
+export function loadReducedMotionPreference() {
+  if (typeof window === 'undefined') return null
+  try {
+    const value = window.localStorage.getItem(REDUCED_MOTION_STORAGE_KEY)
+    if (value === 'true') return true
+    if (value === 'false') return false
+  } catch {}
+  return null
+}
+
+export function saveReducedMotionPreference(value) {
+  // value: boolean | null — null clears override
+  if (typeof window === 'undefined') return false
+  try {
+    if (value == null) {
+      window.localStorage.removeItem(REDUCED_MOTION_STORAGE_KEY)
+    } else {
+      window.localStorage.setItem(REDUCED_MOTION_STORAGE_KEY, value ? 'true' : 'false')
+    }
     return true
   } catch {
     return false

@@ -91,3 +91,66 @@ test('keeps an add-book draft when the selected shelf is full', async ({ page })
   await expect(page.getByText(/That shelf is full/)).toBeVisible()
   await expect(title).toHaveValue('Keep this draft')
 })
+
+test('enters Arrange mode and shows shelf controls', async ({ page }) => {
+  const arrange = page.getByRole('button', { name: 'Arrange', exact: true })
+  await arrange.click()
+  await expect(arrange).toHaveAttribute('aria-pressed', 'true', { timeout: 15_000 })
+  await expect(page.getByRole('button', { name: '+ Shelf' })).toBeVisible()
+})
+
+test('persists graphics quality and galaxy style', async ({ page }) => {
+  await page.getByRole('button', { name: 'Settings' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Settings' })
+  await expect(dialog).toBeVisible()
+
+  await page.getByRole('button', { name: 'Low graphics quality' }).click({ force: true })
+  await expect(page.getByRole('button', { name: 'Low graphics quality' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+    { timeout: 15_000 },
+  )
+
+  await page.getByRole('button', { name: 'Pixelated galaxy style' }).click({ force: true })
+  await expect(page.getByRole('button', { name: 'Pixelated galaxy style' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
+
+  await page.reload()
+  await page.getByRole('button', { name: 'Settings' }).click()
+  await expect(page.getByRole('button', { name: 'Low graphics quality' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+    { timeout: 15_000 },
+  )
+  await expect(page.getByRole('button', { name: 'Pixelated galaxy style' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
+})
+
+test('exports library JSON from the library panel', async ({ page }) => {
+  const downloadPromise = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Export JSON', exact: true }).click()
+  const download = await downloadPromise
+  expect(download.suggestedFilename()).toMatch(/bookshelf-library-.*\.json/)
+  await expect(page.getByRole('button', { name: 'Export backup' })).toHaveCount(0)
+})
+
+test('shows backup reminder and can dismiss it', async ({ page }) => {
+  await expect(page.getByText(/Backup reminder/i)).toBeVisible()
+  await page.getByRole('button', { name: 'Not now' }).click()
+  await expect(page.getByText(/Backup reminder/i)).toHaveCount(0)
+})
+
+test('applies a room preset in Arrange mode', async ({ page }) => {
+  await page.getByRole('button', { name: 'Arrange', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Arrange', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+    { timeout: 15_000 },
+  )
+  await page.getByRole('button', { name: 'Wall', exact: true }).click()
+  await expect(page.getByText(/Room layout applied/i)).toBeVisible()
+})

@@ -1,6 +1,7 @@
 import { useEffect, useId, useState } from 'react'
 import {
   booksOnShelf,
+  ROOM_PRESETS,
   SHELF_ROWS_MAX,
   SHELF_ROWS_MIN,
   SHELF_WIDTH_MAX,
@@ -69,6 +70,7 @@ function Controls({
   onTransformShelf,
   onAddShelf,
   onDeleteShelf,
+  onApplyRoomPreset,
   books = [],
 }) {
   const [controlsOpen, setControlsOpen] = useState(false)
@@ -267,6 +269,28 @@ function Controls({
           <p style={{ margin: 0, color: 'rgba(255,255,255,0.48)', fontSize: 11, lineHeight: 1.35 }}>
             Drag a case on the floor to move it. Orbit the room to frame the layout.
           </p>
+
+          <div role="group" aria-label="Room layout presets" style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {ROOM_PRESETS.map((preset) => (
+              <button
+                type="button"
+                key={preset.id}
+                title={preset.description}
+                onClick={() => onApplyRoomPreset?.(preset.id)}
+                style={{
+                  ...controlButtonStyle(false, reducedMotion),
+                  flex: '1 1 auto',
+                  minWidth: '4.5rem',
+                  background: 'rgba(255,255,255,0.08)',
+                  color: 'rgba(255,255,255,0.88)',
+                  fontSize: 12,
+                  padding: '7px 10px',
+                }}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
 
           <div style={{ display: 'flex', gap: 6 }}>
             <button

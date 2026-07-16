@@ -12,3 +12,8 @@ export function unlockLook() {
 export function isLookLocked() {
   return lookLocked
 }
+
+/** Force-clear (mode changes / unmount safety). */
+export function resetLookLock() {
+  lookLocked = false
+}

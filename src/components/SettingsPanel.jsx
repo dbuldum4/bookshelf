@@ -233,6 +233,8 @@ function SettingsPanel({
                   type="button"
                   key={value}
                   aria-pressed={galaxyMode === value}
+                  aria-label={`${value === 'pixelated' ? 'Pixelated' : 'Realistic'} galaxy style`}
+                  title={`${value === 'pixelated' ? 'Pixelated' : 'Realistic'} galaxy style`}
                   onClick={() => setGalaxyMode(value)}
                   style={chipStyle(galaxyMode === value, reducedMotion)}
                 >
@@ -276,7 +278,7 @@ function SettingsPanel({
               </button>
             </div>
             <p style={{ margin: '8px 0 0', color: 'rgba(255,255,255,0.45)', fontSize: 11, lineHeight: 1.4 }}>
-              Graphics and motion preferences are saved in this browser.
+              Graphics quality, galaxy style, and motion preference are saved in this browser.
             </p>
           </section>
         </div>

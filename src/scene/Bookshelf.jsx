@@ -9,6 +9,69 @@ import {
 } from '../library'
 import { lockLook, unlockLook } from './lookLock'
 
+function makeCaseLabelTexture(name, selected = false) {
+  const canvas = document.createElement('canvas')
+  canvas.width = 512
+  canvas.height = 128
+  const ctx = canvas.getContext('2d')
+  if (!ctx) {
+    const tex = new THREE.CanvasTexture(canvas)
+    tex.colorSpace = THREE.SRGBColorSpace
+    return tex
+  }
+
+  const bg = ctx.createLinearGradient(0, 0, 0, canvas.height)
+  bg.addColorStop(0, selected ? '#4a3570' : '#3a2818')
+  bg.addColorStop(1, selected ? '#2a1c48' : '#24180f')
+  ctx.fillStyle = bg
+  ctx.fillRect(0, 0, canvas.width, canvas.height)
+
+  ctx.strokeStyle = selected ? 'rgba(200, 170, 255, 0.55)' : 'rgba(210, 180, 130, 0.35)'
+  ctx.lineWidth = 4
+  ctx.strokeRect(6, 6, canvas.width - 12, canvas.height - 12)
+
+  ctx.fillStyle = selected ? '#f0e8ff' : '#f4eadc'
+  ctx.font = '700 42px Georgia, "Times New Roman", serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  const label = String(name || 'Shelf').trim() || 'Shelf'
+  ctx.fillText(label, canvas.width / 2, canvas.height / 2 + 2, canvas.width - 48)
+
+  const tex = new THREE.CanvasTexture(canvas)
+  tex.colorSpace = THREE.SRGBColorSpace
+  tex.anisotropy = 4
+  return tex
+}
+
+function CaseNamePlaque({ name, topY, width, selected }) {
+  const texture = useMemo(
+    () => makeCaseLabelTexture(name, selected),
+    [name, selected],
+  )
+  useEffect(() => () => texture.dispose(), [texture])
+
+  const plaqueW = Math.min(Math.max(width * 0.55, 1.4), width - 0.4, 4.5)
+  const plaqueH = 0.32
+
+  return (
+    <group position={[0, topY + 0.28, 0.72]}>
+      <mesh castShadow receiveShadow>
+        <boxGeometry args={[plaqueW + 0.08, plaqueH + 0.06, 0.08]} />
+        <meshStandardMaterial color={selected ? '#5a4278' : '#4a3220'} roughness={0.7} />
+      </mesh>
+      <mesh position={[0, 0, 0.045]} castShadow>
+        <planeGeometry args={[plaqueW, plaqueH]} />
+        <meshStandardMaterial
+          map={texture}
+          roughness={0.55}
+          metalness={0.05}
+          transparent={false}
+        />
+      </mesh>
+    </group>
+  )
+}
+
 function useWoodTexture() {
   const texture = useMemo(() => {
     const size = 512
@@ -182,7 +245,7 @@ function loadCoverImage(url) {
       resolve(image)
     }
     image.onerror = () => {
-      setCoverCache(url, null)
+      // Do not cache null — allow retries on transient failures / CORS race.
       coverImageWaiters.delete(url)
       resolve(null)
     }
@@ -338,14 +401,86 @@ const dragPlane = new THREE.Plane()
 const raycaster = new THREE.Raycaster()
 const dragPoint = new THREE.Vector3()
 const cameraDir = new THREE.Vector3()
+const instantVel = new THREE.Vector3()
 
 function PhysicsBook({ book, mode }) {
   const bodyRef = useRef()
   const dragging = useRef(false)
+  const grabOffset = useRef(new THREE.Vector3())
   const lastPos = useRef(new THREE.Vector3())
   const velocity = useRef(new THREE.Vector3())
   const lastTime = useRef(0)
+  const dragHandlers = useRef({ onMove: null, onUp: null, endDrag: null })
   const { camera, gl } = useThree()
+
+  // Keep drag handlers current without attaching global listeners until grab.
+  useEffect(() => {
+    const removeListeners = () => {
+      const { onMove, onUp } = dragHandlers.current
+      if (!onMove || !onUp) return
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+      window.removeEventListener('blur', onUp)
+    }
+
+    const endDrag = (applyVelocity) => {
+      if (!dragging.current) return
+      dragging.current = false
+      unlockLook()
+      gl.domElement.style.cursor = 'auto'
+      removeListeners()
+      const body = bodyRef.current
+      if (!body) return
+      body.setBodyType(0, true)
+      if (applyVelocity) {
+        const v = velocity.current
+        const max = 18
+        const speed = v.length()
+        if (speed > max) v.multiplyScalar(max / speed)
+        body.setLinvel({ x: v.x, y: v.y, z: v.z }, true)
+        body.setAngvel({
+          x: (Math.random() - 0.5) * 4,
+          y: (Math.random() - 0.5) * 4,
+          z: (Math.random() - 0.5) * 4,
+        }, true)
+      } else {
+        body.setLinvel({ x: 0, y: 0, z: 0 }, true)
+        body.setAngvel({ x: 0, y: 0, z: 0 }, true)
+      }
+    }
+
+    const onMove = (e) => {
+      if (!dragging.current) return
+      const body = bodyRef.current
+      if (!body) return
+      const rect = gl.domElement.getBoundingClientRect()
+      const nx = ((e.clientX - rect.left) / Math.max(1, rect.width)) * 2 - 1
+      const ny = -((e.clientY - rect.top) / Math.max(1, rect.height)) * 2 + 1
+      raycaster.setFromCamera(new THREE.Vector2(nx, ny), camera)
+      if (!raycaster.ray.intersectPlane(dragPlane, dragPoint)) return
+      const now = performance.now()
+      const dt = Math.max(0.001, (now - lastTime.current) / 1000)
+      instantVel.copy(dragPoint).sub(lastPos.current).divideScalar(dt)
+      velocity.current.lerp(instantVel, 0.45)
+      lastPos.current.copy(dragPoint)
+      lastTime.current = now
+      const tx = dragPoint.x + grabOffset.current.x
+      const ty = dragPoint.y + grabOffset.current.y
+      const tz = dragPoint.z + grabOffset.current.z
+      body.setNextKinematicTranslation({ x: tx, y: ty, z: tz })
+    }
+
+    const onUp = () => endDrag(true)
+
+    dragHandlers.current = { onMove, onUp, endDrag }
+
+    return () => {
+      if (dragging.current) {
+        endDrag(false)
+      }
+    }
+  }, [camera, gl])
 
   const onPointerDown = useCallback(
     (e) => {
@@ -360,75 +495,40 @@ function PhysicsBook({ book, mode }) {
       camera.getWorldDirection(cameraDir)
       dragPlane.setFromNormalAndCoplanarPoint(cameraDir.negate(), new THREE.Vector3(p.x, p.y, p.z))
       raycaster.setFromCamera(e.pointer, camera)
-      raycaster.ray.intersectPlane(dragPlane, dragPoint)
+      if (!raycaster.ray.intersectPlane(dragPlane, dragPoint)) {
+        dragging.current = false
+        unlockLook()
+        body.setBodyType(0, true)
+        return
+      }
+      grabOffset.current.set(p.x - dragPoint.x, p.y - dragPoint.y, p.z - dragPoint.z)
       lastPos.current.copy(dragPoint)
       velocity.current.set(0, 0, 0)
       lastTime.current = performance.now()
       gl.domElement.style.cursor = 'grabbing'
+      const { onMove, onUp } = dragHandlers.current
+      if (onMove && onUp) {
+        window.addEventListener('pointermove', onMove)
+        window.addEventListener('pointerup', onUp)
+        window.addEventListener('pointercancel', onUp)
+        window.addEventListener('blur', onUp)
+      }
     },
     [mode, camera, gl]
   )
-
-  useEffect(() => {
-    const onMove = (e) => {
-      if (!dragging.current) return
-      const body = bodyRef.current
-      if (!body) return
-      const rect = gl.domElement.getBoundingClientRect()
-      const nx = ((e.clientX - rect.left) / Math.max(1, rect.width)) * 2 - 1
-      const ny = -((e.clientY - rect.top) / Math.max(1, rect.height)) * 2 + 1
-      raycaster.setFromCamera(new THREE.Vector2(nx, ny), camera)
-      raycaster.ray.intersectPlane(dragPlane, dragPoint)
-      const now = performance.now()
-      const dt = Math.max(0.001, (now - lastTime.current) / 1000)
-      velocity.current.copy(dragPoint).sub(lastPos.current).divideScalar(dt)
-      lastPos.current.copy(dragPoint)
-      lastTime.current = now
-      body.setNextKinematicTranslation({ x: dragPoint.x, y: dragPoint.y, z: dragPoint.z })
-    }
-    const onUp = () => {
-      if (!dragging.current) return
-      dragging.current = false
-      unlockLook()
-      gl.domElement.style.cursor = 'auto'
-      const body = bodyRef.current
-      if (!body) return
-      body.setBodyType(0, true)
-      const v = velocity.current
-      const max = 18
-      const speed = v.length()
-      if (speed > max) v.multiplyScalar(max / speed)
-      body.setLinvel({ x: v.x, y: v.y, z: v.z }, true)
-      body.setAngvel({ x: (Math.random() - 0.5) * 4, y: (Math.random() - 0.5) * 4, z: (Math.random() - 0.5) * 4 }, true)
-    }
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
-    window.addEventListener('pointercancel', onUp)
-    window.addEventListener('blur', onUp)
-    return () => {
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
-      window.removeEventListener('pointercancel', onUp)
-      window.removeEventListener('blur', onUp)
-      if (dragging.current) {
-        dragging.current = false
-        unlockLook()
-        gl.domElement.style.cursor = 'auto'
-      }
-    }
-  }, [camera, gl])
 
   return (
     <RigidBody
       ref={bodyRef}
       type="dynamic"
-      position={[book.position[0], book.position[1] + 0.3, book.position[2]]}
+      position={[book.position[0], book.position[1] + 0.08, book.position[2]]}
       colliders="cuboid"
       mass={0.4}
       restitution={0.35}
       friction={0.6}
       linearDamping={0.3}
       angularDamping={0.4}
+      ccd
       enabled={mode === 'play'}
     >
       <group
@@ -516,6 +616,7 @@ function BookshelfCase({
   const { camera, gl } = useThree()
   const dragging = useRef(false)
   const dragOffset = useRef(new THREE.Vector3())
+  const dragHandlers = useRef({ onMove: null, onUp: null, endDrag: null })
 
   const width = shelf.width || DEFAULT_SHELF_WIDTH
   const rows = shelf.rows || 4
@@ -536,20 +637,27 @@ function BookshelfCase({
   const arrange = mode === 'arrange'
   const interactiveBooks = mode !== 'arrange' && mode !== 'play'
 
-  const onPointerDownCase = (event) => {
-    if (!arrange || event.button !== 0) return
-    event.stopPropagation()
-    onSelectShelf?.(shelf.id)
-    raycaster.setFromCamera(event.pointer, camera)
-    if (!raycaster.ray.intersectPlane(floorPlane, arrangeHit)) return
-    dragOffset.current.set(shelf.x - arrangeHit.x, 0, shelf.z - arrangeHit.z)
-    dragging.current = true
-    onShelfDragChange?.(true)
-    gl.domElement.style.cursor = 'grabbing'
-  }
-
+  // Keep arrange drag handlers current; attach window listeners only while dragging.
   useEffect(() => {
     if (!arrange) return undefined
+
+    const removeListeners = () => {
+      const { onMove, onUp } = dragHandlers.current
+      if (!onMove || !onUp) return
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+      window.removeEventListener('blur', onUp)
+    }
+
+    const endDrag = () => {
+      if (!dragging.current) return
+      dragging.current = false
+      onShelfDragChange?.(false)
+      gl.domElement.style.cursor = 'auto'
+      removeListeners()
+    }
+
     const onMove = (event) => {
       if (!dragging.current) return
       const rect = gl.domElement.getBoundingClientRect()
@@ -562,28 +670,36 @@ function BookshelfCase({
         z: arrangeHit.z + dragOffset.current.z,
       })
     }
-    const onUp = () => {
-      if (!dragging.current) return
-      dragging.current = false
-      onShelfDragChange?.(false)
-      gl.domElement.style.cursor = 'auto'
-    }
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
-    window.addEventListener('pointercancel', onUp)
-    window.addEventListener('blur', onUp)
+
+    const onUp = () => endDrag()
+
+    dragHandlers.current = { onMove, onUp, endDrag }
+
     return () => {
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
-      window.removeEventListener('pointercancel', onUp)
-      window.removeEventListener('blur', onUp)
       if (dragging.current) {
-        dragging.current = false
-        onShelfDragChange?.(false)
-        gl.domElement.style.cursor = 'auto'
+        endDrag()
       }
     }
   }, [arrange, camera, gl, onMoveShelf, onShelfDragChange, shelf.id])
+
+  const onPointerDownCase = (event) => {
+    if (!arrange || event.button !== 0) return
+    event.stopPropagation()
+    onSelectShelf?.(shelf.id)
+    raycaster.setFromCamera(event.pointer, camera)
+    if (!raycaster.ray.intersectPlane(floorPlane, arrangeHit)) return
+    dragOffset.current.set(shelf.x - arrangeHit.x, 0, shelf.z - arrangeHit.z)
+    dragging.current = true
+    onShelfDragChange?.(true)
+    gl.domElement.style.cursor = 'grabbing'
+    const { onMove, onUp } = dragHandlers.current
+    if (onMove && onUp) {
+      window.addEventListener('pointermove', onMove)
+      window.addEventListener('pointerup', onUp)
+      window.addEventListener('pointercancel', onUp)
+      window.addEventListener('blur', onUp)
+    }
+  }
 
   return (
     <group position={[shelf.x, 0, shelf.z]} rotation={[0, shelf.yaw || 0, 0]}>
@@ -636,6 +752,13 @@ function BookshelfCase({
             <meshStandardMaterial map={woodTex} roughness={0.45} />
           </mesh>
         </group>
+
+        <CaseNamePlaque
+          name={shelf.name}
+          topY={topY}
+          width={width}
+          selected={selected}
+        />
 
         {rowYs.map((y, shelfIndex) => (
           <ShelfRow
@@ -697,7 +820,8 @@ function Bookshelf({
       ))}
 
       {mode === 'play' && (
-        <CuboidCollider position={[0, -1.2, 0]} args={[80, 0.5, 80]} />
+        // Visual floor at y=-0.5; half-extent 0.5 → top surface at -0.5 when center is -1.0
+        <CuboidCollider position={[0, -1.0, 0]} args={[80, 0.5, 80]} />
       )}
 
       {/* Floor disc for grounding the room */}
