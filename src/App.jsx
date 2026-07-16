@@ -35,6 +35,7 @@ import {
   saveLibraryState,
   shouldRemindLibraryBackup,
   tryReorderBookOnShelf,
+  tryReorderBookToIndex,
 } from './library'
 import Scene from './scene/Scene'
 import { isWebGLAvailable } from './webgl'
@@ -590,6 +591,24 @@ export default function App() {
     })
   }
 
+  /** 3D spine drag: drop at absolute shelf index; order auto-saves via libraryState effect. */
+  const handleReorderBookToIndex = useCallback((bookId, targetIndex) => {
+    let failure = null
+    setLibraryState((state) => {
+      const liveBook = state.books.find((entry) => entry.id === bookId)
+      if (!liveBook) return state
+      const liveShelf = state.shelves.find((entry) => entry.id === liveBook.shelfId)
+      const result = tryReorderBookToIndex(state.books, bookId, targetIndex, liveShelf)
+      if (!result.ok) {
+        failure = result.reason
+        return state
+      }
+      if (!result.changed) return state
+      return { ...state, books: result.books }
+    })
+    if (failure) flashStatus(failure)
+  }, [flashStatus])
+
   const retryWebGL = () => {
     setWebGLAvailable(isWebGLAvailable())
   }
@@ -623,7 +642,7 @@ export default function App() {
               canvas.setAttribute('role', 'application')
               canvas.setAttribute(
                 'aria-label',
-                '3D library. WASD to walk, Space to jump, drag to look around. Arrow keys move between books. Escape clears selection. Use Arrange mode to place shelves.',
+                '3D library. WASD to walk, Space to jump, drag to look around. Drag book spines to reorder them on a shelf. Arrow keys move between books. Escape clears selection. Use Arrange mode to place shelves.',
               )
             }}
           >
@@ -642,6 +661,7 @@ export default function App() {
                 selectedShelfId={selectedShelfId}
                 onSelectShelf={setSelectedShelfId}
                 onMoveShelf={moveShelf}
+                onReorderBookToIndex={handleReorderBookToIndex}
                 focusPoint={focusPoint}
               />
             </Suspense>

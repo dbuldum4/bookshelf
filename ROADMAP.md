@@ -81,10 +81,11 @@ Named cases live together in one walkable room. Books belong to exactly one shel
    - Migration: existing libraries land on one default “Library” shelf.
    - Completed: room presets (Wall, L-shape, Gallery) that reposition existing cases.
    - Completed: 3D name plaques on each case.
+   - Completed: 3D drag-to-reorder spines (walk/orbit modes); order auto-saves to localStorage with the library.
 
 ### Out of scope (later)
 
 - Full cloud sync or accounts.
 - Reading goals / year-in-review.
 - Shareable public shelf links.
-- 3D drag-to-reorder spines; pointer-lock FPS; tilt/pitch of cases.
+- Pointer-lock FPS; tilt/pitch of cases.

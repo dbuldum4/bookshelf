@@ -28,16 +28,20 @@ import {
   parseLibraryCsv,
   parseLibraryFile,
   parseLibraryImport,
+  insertionIndexFromLocalPoint,
   reorderBookOnShelf,
+  reorderBookToIndex,
   ROOM_LAYOUT_BOUND,
   sanitizeCoverUrl,
   saveLibrary,
   saveLibraryState,
   SHELF_ROWS_MAX,
   SHELF_WIDTH_MAX,
+  shelfRowYs,
   shouldRemindLibraryBackup,
   sortLibrary,
   tryReorderBookOnShelf,
+  tryReorderBookToIndex,
 } from './library'
 
 function makeStorage(initial = {}) {
@@ -268,6 +272,50 @@ describe('shelf layout and capacity', () => {
     expect(next.find((book) => book.id === 'x').shelfId).toBe('other')
   })
 
+  it('moves a book to an absolute shelf index for 3D drag-to-reorder', () => {
+    const books = [
+      { id: 'a', shelfId: DEFAULT_SHELF_ID, title: 'A' },
+      { id: 'x', shelfId: 'other', title: 'X' },
+      { id: 'b', shelfId: DEFAULT_SHELF_ID, title: 'B' },
+      { id: 'c', shelfId: DEFAULT_SHELF_ID, title: 'C' },
+    ]
+    const next = reorderBookToIndex(books, 'c', 0)
+    expect(booksOnShelf(next, DEFAULT_SHELF_ID).map((book) => book.id)).toEqual(['c', 'a', 'b'])
+    expect(booksOnShelf(next, 'other').map((book) => book.id)).toEqual(['x'])
+
+    const same = reorderBookToIndex(books, 'b', 1)
+    expect(booksOnShelf(same, DEFAULT_SHELF_ID).map((book) => book.id)).toEqual(['a', 'b', 'c'])
+  })
+
+  it('maps a local shelf point to an insertion index among remaining books', () => {
+    const shelf = createDefaultShelf({ width: 8, rows: 2 })
+    const mates = [
+      { id: 'a', shelfId: shelf.id, title: 'A' },
+      { id: 'b', shelfId: shelf.id, title: 'B' },
+      { id: 'c', shelfId: shelf.id, title: 'C' },
+    ]
+    const layout = buildShelfCaseLayout(mates.filter((book) => book.id !== 'b'), shelf)
+    const first = layout[0][0]
+    const last = layout[0][layout[0].length - 1]
+    const rowY = shelfRowYs(shelf.rows)[0]
+
+    expect(insertionIndexFromLocalPoint(
+      mates,
+      shelf,
+      first.position[0] - first.width,
+      rowY + first.position[1],
+      'b',
+    )).toBe(0)
+
+    expect(insertionIndexFromLocalPoint(
+      mates,
+      shelf,
+      last.position[0] + last.width,
+      rowY + last.position[1],
+      'b',
+    )).toBe(2)
+  })
+
   it('rejects a reorder that would create an overflow row', () => {
     const shelf = createDefaultShelf({ width: 3.5, rows: 2 })
     const books = Array.from({ length: 8 }, (_, index) => ({
@@ -280,6 +328,11 @@ describe('shelf layout and capacity', () => {
     const result = tryReorderBookOnShelf(books, 'book-21', 1, shelf)
     expect(result.ok).toBe(false)
     expect(result.reason).toMatch(/capacity/i)
+
+    const byIndex = tryReorderBookToIndex(books, 'book-21', 0, shelf)
+    // Absolute moves can still overflow depending on packing; either ok with fit or reject.
+    if (!byIndex.ok) expect(byIndex.reason).toMatch(/capacity/i)
+    else expect(booksFitOnShelf(booksOnShelf(byIndex.books, shelf.id), shelf)).toBe(true)
   })
 
   it('expands a shelf and spills overflow onto new cases so every book is visible', () => {

@@ -1767,9 +1767,39 @@ export function reorderBookOnShelf(library, bookId, delta) {
   const targetPos = matePos + delta
   if (matePos < 0 || targetPos < 0 || targetPos >= mates.length) return books
 
+  return reorderBookToIndex(books, bookId, targetPos)
+}
+
+/**
+ * Move a book to an absolute index among its shelf mates.
+ * `targetIndex` is the insertion index after the book is removed from the
+ * mate list (0 … mates.length - 1, or mates.length - 1 max after clamp for
+ * append-at-end via insert after last remaining). Global array order is
+ * rewritten so shelf-relative order (and localStorage / JSON export) stays durable.
+ */
+export function reorderBookToIndex(library, bookId, targetIndex) {
+  const books = Array.isArray(library) ? [...library] : []
+  const book = books.find((entry) => entry.id === bookId)
+  if (!book) return books
+
+  const shelfId = book.shelfId
+  const mates = books.filter((entry) => entry.shelfId === shelfId)
+  const from = mates.findIndex((entry) => entry.id === bookId)
+  if (from < 0) return books
+
   const reordered = [...mates]
-  const [moved] = reordered.splice(matePos, 1)
-  reordered.splice(targetPos, 0, moved)
+  const [moved] = reordered.splice(from, 1)
+  if (reordered.length === 0) return books
+
+  // After removal, valid insert slots are 0..reordered.length (append).
+  const insertAt = Math.max(
+    0,
+    Math.min(reordered.length, Math.round(Number(targetIndex)) || 0),
+  )
+  // Final index equals insertAt; same order when insertAt === from.
+  if (insertAt === from) return books
+
+  reordered.splice(insertAt, 0, moved)
 
   let cursor = 0
   return books.map((entry) => (entry.shelfId === shelfId ? reordered[cursor++] : entry))
@@ -1789,6 +1819,84 @@ export function tryReorderBookOnShelf(library, bookId, delta, shelf) {
     }
   }
   return { ok: true, books }
+}
+
+/**
+ * Absolute-index variant of tryReorderBookOnShelf (for 3D drag-to-reorder).
+ * Returns { ok, books, changed } or { ok:false, reason }.
+ */
+export function tryReorderBookToIndex(library, bookId, targetIndex, shelf) {
+  const before = Array.isArray(library) ? library : []
+  const books = reorderBookToIndex(before, bookId, targetIndex)
+  if (!shelf || !booksFitOnShelf(booksOnShelf(books, shelf.id), shelf)) {
+    return {
+      ok: false,
+      reason: 'That reorder would exceed the shelf capacity. Resize the case or move a book first.',
+    }
+  }
+  const shelfId = before.find((entry) => entry.id === bookId)?.shelfId
+  const changed = shelfId
+    ? booksOnShelf(before, shelfId).some((book, index) => booksOnShelf(books, shelfId)[index]?.id !== book.id)
+    : false
+  return { ok: true, books, changed }
+}
+
+/**
+ * Map a point in shelf-local coordinates (x, y) to an insertion index among
+ * shelf mates after removing `draggingId`. Used by 3D spine drag-to-reorder.
+ * Returns an integer in 0 … mates.length-1 (after removal slot count).
+ */
+export function insertionIndexFromLocalPoint(mates, shelf, localX, localY, draggingId) {
+  const list = Array.isArray(mates) ? mates : []
+  if (list.length === 0) return 0
+
+  const without = list.filter((book) => book.id !== draggingId)
+  if (without.length === 0) return 0
+
+  const layout = buildShelfCaseLayout(without, shelf)
+  const rowYs = shelfRowYs(shelf?.rows)
+  const placed = []
+  for (let rowIndex = 0; rowIndex < layout.length; rowIndex += 1) {
+    const rowY = rowYs[rowIndex] || 0
+    for (const entry of layout[rowIndex]) {
+      placed.push({
+        id: entry.id,
+        x: entry.position[0],
+        y: rowY + entry.position[1],
+        width: entry.width,
+      })
+    }
+  }
+  if (placed.length === 0) return 0
+
+  // Score gaps before, between, and after books (reading order).
+  let bestIndex = 0
+  let bestDist = Infinity
+  for (let i = 0; i <= placed.length; i += 1) {
+    let gx
+    let gy
+    if (i === 0) {
+      gx = placed[0].x - placed[0].width / 2 - 0.12
+      gy = placed[0].y
+    } else if (i === placed.length) {
+      const last = placed[placed.length - 1]
+      gx = last.x + last.width / 2 + 0.12
+      gy = last.y
+    } else {
+      const prev = placed[i - 1]
+      const next = placed[i]
+      gx = (prev.x + next.x) / 2
+      gy = (prev.y + next.y) / 2
+    }
+    const dx = localX - gx
+    const dy = localY - gy
+    const dist = dx * dx + dy * dy * 1.35 // prefer horizontal matches slightly
+    if (dist < bestDist) {
+      bestDist = dist
+      bestIndex = i
+    }
+  }
+  return bestIndex
 }
 
 /**

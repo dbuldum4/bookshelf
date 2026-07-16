@@ -51,6 +51,7 @@ function Scene({
   selectedShelfId,
   onSelectShelf,
   onMoveShelf,
+  onReorderBookToIndex,
   focusPoint = null,
 }) {
   const graphics = graphicsProp || getGraphicsPreset(DEFAULT_GRAPHICS_QUALITY)
@@ -60,15 +61,24 @@ function Scene({
   const controlsRef = useRef(null)
   const modeRef = useRef(mode)
   const [shelfDragging, setShelfDragging] = useState(false)
+  const [bookDragging, setBookDragging] = useState(false)
   modeRef.current = mode
 
   const handleShelfDragChange = useCallback((dragging) => {
     setShelfDragging(dragging)
     if (controlsRef.current) {
       const orbitMode = modeRef.current === 'custom' || modeRef.current === 'arrange'
-      controlsRef.current.enabled = orbitMode && !dragging
+      controlsRef.current.enabled = orbitMode && !dragging && !bookDragging
     }
-  }, [])
+  }, [bookDragging])
+
+  const handleBookDragChange = useCallback((dragging) => {
+    setBookDragging(dragging)
+    if (controlsRef.current) {
+      const orbitMode = modeRef.current === 'custom' || modeRef.current === 'arrange'
+      controlsRef.current.enabled = orbitMode && !dragging && !shelfDragging
+    }
+  }, [shelfDragging])
 
   // Only bob the room in free Orbit mode — walk/rotate/arrange stay stable.
   const floatRoom = !reducedMotion && mode === 'custom'
@@ -83,6 +93,8 @@ function Scene({
       onSelectShelf={onSelectShelf}
       onMoveShelf={onMoveShelf}
       onShelfDragChange={handleShelfDragChange}
+      onReorderBookToIndex={onReorderBookToIndex}
+      onBookDragChange={handleBookDragChange}
     />
   )
 
@@ -190,7 +202,7 @@ function Scene({
       <OrbitControls
         ref={controlsRef}
         makeDefault
-        enabled={(mode === 'custom' || mode === 'arrange') && !shelfDragging}
+        enabled={(mode === 'custom' || mode === 'arrange') && !shelfDragging && !bookDragging}
         enablePan={mode === 'arrange'}
         minDistance={mode === 'arrange' ? 4 : 6}
         maxDistance={mode === 'arrange' ? 48 : 22}

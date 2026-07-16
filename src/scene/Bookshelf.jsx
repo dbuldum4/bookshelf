@@ -5,6 +5,7 @@ import * as THREE from 'three'
 import {
   buildShelfCaseLayout,
   DEFAULT_SHELF_WIDTH,
+  insertionIndexFromLocalPoint,
   shelfRowYs,
 } from '../library'
 import { lockLook, unlockLook } from './lookLock'
@@ -348,52 +349,87 @@ function BookMesh({ book }) {
   )
 }
 
-function Book({ book, selected, onSelect, interactive }) {
+const REORDER_DRAG_THRESHOLD_PX = 8
+
+function Book({
+  book,
+  selected,
+  onSelect,
+  interactive,
+  reorderable = false,
+  isReorderSource = false,
+  /** Row-local override while dragging; null keeps rest pose. */
+  dragLift = null,
+  onReorderPointerDown,
+}) {
   const groupRef = useRef()
   const { gl } = useThree()
+  const rest = book.position
+  const pose = dragLift
+    ? [dragLift.x, dragLift.y, dragLift.z]
+    : rest
 
   useFrame((_, delta) => {
     if (!groupRef.current) return
-    groupRef.current.position.z = THREE.MathUtils.damp(
-      groupRef.current.position.z,
-      selected ? 0.82 : 0,
-      8,
-      delta
-    )
-    const scale = THREE.MathUtils.damp(
-      groupRef.current.scale.x,
-      selected ? 1.04 : 1,
-      8,
-      delta
-    )
+    // While dragging, position is driven by the pose prop; only animate select pull-out.
+    if (!dragLift) {
+      groupRef.current.position.z = THREE.MathUtils.damp(
+        groupRef.current.position.z,
+        selected ? 0.82 : rest[2] || 0,
+        8,
+        delta,
+      )
+    }
+    const targetScale = isReorderSource ? 1.08 : selected ? 1.04 : 1
+    const scale = THREE.MathUtils.damp(groupRef.current.scale.x, targetScale, 8, delta)
     groupRef.current.scale.setScalar(scale)
     groupRef.current.rotation.z = THREE.MathUtils.damp(
       groupRef.current.rotation.z,
-      selected ? 0 : book.tilt || 0,
+      selected || isReorderSource ? 0 : book.tilt || 0,
       8,
-      delta
+      delta,
     )
   })
 
   return (
     <group
       ref={groupRef}
-      position={book.position}
+      position={pose}
       rotation={[0, 0, book.tilt || 0]}
+      onPointerDown={reorderable && onReorderPointerDown
+        ? (event) => onReorderPointerDown(event, book)
+        : undefined}
       onClick={interactive ? (event) => {
         event.stopPropagation()
         onSelect(selected ? null : book.id)
       } : undefined}
-      onPointerOver={interactive ? (event) => {
+      onPointerOver={interactive || reorderable ? (event) => {
         event.stopPropagation()
-        gl.domElement.style.cursor = 'pointer'
+        gl.domElement.style.cursor = reorderable ? 'grab' : 'pointer'
       } : undefined}
-      onPointerOut={interactive ? () => {
-        gl.domElement.style.cursor = 'auto'
+      onPointerOut={interactive || reorderable ? () => {
+        if (!isReorderSource) gl.domElement.style.cursor = 'auto'
       } : undefined}
     >
       <BookMesh book={book} />
     </group>
+  )
+}
+
+function ReorderInsertMarker({ x, y, height }) {
+  return (
+    <mesh position={[x, y, 0.55]} castShadow={false} receiveShadow={false}>
+      <boxGeometry args={[0.06, height || 1.1, 0.08]} />
+      <meshStandardMaterial
+        color="#c4a0ff"
+        emissive="#6a3dcc"
+        emissiveIntensity={0.55}
+        roughness={0.35}
+        metalness={0.15}
+        transparent
+        opacity={0.92}
+      />
+    </mesh>
   )
 }
 
@@ -561,6 +597,9 @@ function ShelfRow({
   selectedBookId,
   onSelectBook,
   interactiveBooks,
+  reorderable,
+  reorderState,
+  onReorderPointerDown,
 }) {
   const plankWidth = width || DEFAULT_SHELF_WIDTH
 
@@ -590,6 +629,18 @@ function ShelfRow({
             selected={selectedBookId === b.id}
             onSelect={onSelectBook}
             interactive={interactiveBooks}
+            reorderable={reorderable}
+            isReorderSource={reorderState?.bookId === b.id && reorderState?.active}
+            dragLift={
+              reorderState?.bookId === b.id && reorderState?.active
+                ? {
+                    x: reorderState.localX,
+                    y: reorderState.localY - y,
+                    z: 0.95,
+                  }
+                : null
+            }
+            onReorderPointerDown={onReorderPointerDown}
           />
         )
       )}
@@ -599,6 +650,11 @@ function ShelfRow({
 
 const floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
 const arrangeHit = new THREE.Vector3()
+
+const reorderHit = new THREE.Vector3()
+const reorderPlane = new THREE.Plane()
+const reorderNormal = new THREE.Vector3()
+const reorderOrigin = new THREE.Vector3()
 
 function BookshelfCase({
   shelf,
@@ -610,13 +666,19 @@ function BookshelfCase({
   onSelectShelf,
   onMoveShelf,
   onShelfDragChange,
+  onReorderBookToIndex,
+  onBookDragChange,
 }) {
   const woodTex = useWoodTexture()
   const woodTex2 = useWoodTexture()
   const { camera, gl } = useThree()
+  const caseRef = useRef()
   const dragging = useRef(false)
   const dragOffset = useRef(new THREE.Vector3())
   const dragHandlers = useRef({ onMove: null, onUp: null, endDrag: null })
+  const reorderDrag = useRef(null)
+  const reorderHandlers = useRef({ onMove: null, onUp: null, endDrag: null })
+  const [reorderState, setReorderState] = useState(null)
 
   const width = shelf.width || DEFAULT_SHELF_WIDTH
   const rows = shelf.rows || 4
@@ -636,6 +698,23 @@ function BookshelfCase({
   const selected = selectedShelfId === shelf.id
   const arrange = mode === 'arrange'
   const interactiveBooks = mode !== 'arrange' && mode !== 'play'
+  const reorderable = interactiveBooks && typeof onReorderBookToIndex === 'function'
+
+  const projectPointerToCaseLocal = useCallback((clientX, clientY) => {
+    const caseGroup = caseRef.current
+    if (!caseGroup) return null
+    const rect = gl.domElement.getBoundingClientRect()
+    const nx = ((clientX - rect.left) / Math.max(1, rect.width)) * 2 - 1
+    const ny = -((clientY - rect.top) / Math.max(1, rect.height)) * 2 + 1
+    raycaster.setFromCamera(new THREE.Vector2(nx, ny), camera)
+    caseGroup.updateWorldMatrix(true, false)
+    reorderNormal.set(0, 0, 1).transformDirection(caseGroup.matrixWorld)
+    reorderOrigin.set(0, midY, 0.35).applyMatrix4(caseGroup.matrixWorld)
+    reorderPlane.setFromNormalAndCoplanarPoint(reorderNormal, reorderOrigin)
+    if (!raycaster.ray.intersectPlane(reorderPlane, reorderHit)) return null
+    caseGroup.worldToLocal(reorderHit)
+    return { x: reorderHit.x, y: reorderHit.y }
+  }, [camera, gl, midY])
 
   // Keep arrange drag handlers current; attach window listeners only while dragging.
   useEffect(() => {
@@ -682,6 +761,163 @@ function BookshelfCase({
     }
   }, [arrange, camera, gl, onMoveShelf, onShelfDragChange, shelf.id])
 
+  // Spine drag-to-reorder: pointer listeners only while a potential/active drag lives.
+  useEffect(() => {
+    if (!reorderable) return undefined
+
+    const removeListeners = () => {
+      const { onMove, onUp } = reorderHandlers.current
+      if (!onMove || !onUp) return
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+      window.removeEventListener('blur', onUp)
+    }
+
+    const endDrag = (commit) => {
+      const session = reorderDrag.current
+      if (!session) return
+      reorderDrag.current = null
+      unlockLook()
+      onBookDragChange?.(false)
+      gl.domElement.style.cursor = 'auto'
+      removeListeners()
+
+      const didDrag = session.active
+      const bookId = session.bookId
+      const insertIndex = session.insertIndex
+      setReorderState(null)
+
+      if (commit && didDrag && typeof insertIndex === 'number') {
+        onReorderBookToIndex?.(bookId, insertIndex)
+        // Swallow the trailing click so a completed drag does not toggle selection.
+        const blockClick = (event) => {
+          event.preventDefault()
+          event.stopPropagation()
+          window.removeEventListener('click', blockClick, true)
+        }
+        window.addEventListener('click', blockClick, true)
+        window.setTimeout(() => window.removeEventListener('click', blockClick, true), 0)
+      }
+    }
+
+    const onMove = (event) => {
+      const session = reorderDrag.current
+      if (!session) return
+
+      const dx = event.clientX - session.startClientX
+      const dy = event.clientY - session.startClientY
+      if (!session.active) {
+        if (Math.hypot(dx, dy) < REORDER_DRAG_THRESHOLD_PX) return
+        session.active = true
+        lockLook()
+        onBookDragChange?.(true)
+        gl.domElement.style.cursor = 'grabbing'
+      }
+
+      const local = projectPointerToCaseLocal(event.clientX, event.clientY)
+      if (!local) return
+      const insertIndex = insertionIndexFromLocalPoint(
+        books,
+        shelf,
+        local.x,
+        local.y,
+        session.bookId,
+      )
+      session.insertIndex = insertIndex
+      session.localX = local.x
+      session.localY = local.y
+
+      // Marker position: gap among remaining books in layout space.
+      const others = books.filter((entry) => entry.id !== session.bookId)
+      const layout = buildShelfCaseLayout(others, shelf)
+      const ys = shelfRowYs(shelf.rows)
+      let markerX = local.x
+      let markerY = local.y
+      let markerH = session.bookHeight || 1.1
+      const flat = []
+      for (let r = 0; r < layout.length; r += 1) {
+        for (const entry of layout[r]) {
+          flat.push({
+            x: entry.position[0],
+            y: (ys[r] || 0) + entry.position[1],
+            width: entry.width,
+            height: entry.height,
+          })
+        }
+      }
+      if (flat.length === 0) {
+        markerX = 0
+        markerY = (ys[0] || 0) + markerH / 2
+      } else if (insertIndex <= 0) {
+        markerX = flat[0].x - flat[0].width / 2 - 0.08
+        markerY = flat[0].y
+        markerH = flat[0].height
+      } else if (insertIndex >= flat.length) {
+        const last = flat[flat.length - 1]
+        markerX = last.x + last.width / 2 + 0.08
+        markerY = last.y
+        markerH = last.height
+      } else {
+        const prev = flat[insertIndex - 1]
+        const next = flat[insertIndex]
+        markerX = (prev.x + next.x) / 2
+        markerY = (prev.y + next.y) / 2
+        markerH = Math.max(prev.height, next.height)
+      }
+
+      setReorderState({
+        bookId: session.bookId,
+        active: true,
+        localX: local.x,
+        localY: local.y,
+        insertIndex,
+        markerX,
+        markerY,
+        markerH,
+      })
+    }
+
+    const onUp = () => endDrag(true)
+
+    reorderHandlers.current = { onMove, onUp, endDrag }
+
+    return () => {
+      if (reorderDrag.current) endDrag(false)
+    }
+  }, [
+    books,
+    gl,
+    onBookDragChange,
+    onReorderBookToIndex,
+    projectPointerToCaseLocal,
+    reorderable,
+    shelf,
+  ])
+
+  const onReorderPointerDown = useCallback((event, book) => {
+    if (!reorderable || event.button !== 0) return
+    event.stopPropagation()
+    const local = projectPointerToCaseLocal(event.clientX, event.clientY)
+    reorderDrag.current = {
+      bookId: book.id,
+      bookHeight: book.height || 1.1,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      active: false,
+      insertIndex: books.findIndex((entry) => entry.id === book.id),
+      localX: local?.x ?? book.position[0],
+      localY: local?.y ?? book.position[1],
+    }
+    const { onMove, onUp } = reorderHandlers.current
+    if (onMove && onUp) {
+      window.addEventListener('pointermove', onMove)
+      window.addEventListener('pointerup', onUp)
+      window.addEventListener('pointercancel', onUp)
+      window.addEventListener('blur', onUp)
+    }
+  }, [books, projectPointerToCaseLocal, reorderable])
+
   const onPointerDownCase = (event) => {
     if (!arrange || event.button !== 0) return
     event.stopPropagation()
@@ -701,8 +937,17 @@ function BookshelfCase({
     }
   }
 
+  // Insertion marker sits in case-local space (not row-local).
+  const marker = reorderState?.active
+    ? {
+        x: reorderState.markerX,
+        y: reorderState.markerY,
+        height: reorderState.markerH,
+      }
+    : null
+
   return (
-    <group position={[shelf.x, 0, shelf.z]} rotation={[0, shelf.yaw || 0, 0]}>
+    <group ref={caseRef} position={[shelf.x, 0, shelf.z]} rotation={[0, shelf.yaw || 0, 0]}>
       <group position={[0, 0, 0]}>
         {selected && arrange && (
           <mesh position={[0, 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]}>
@@ -771,8 +1016,15 @@ function BookshelfCase({
             selectedBookId={selectedBookId}
             onSelectBook={onSelectBook}
             interactiveBooks={interactiveBooks}
+            reorderable={reorderable}
+            reorderState={reorderState}
+            onReorderPointerDown={onReorderPointerDown}
           />
         ))}
+
+        {marker && (
+          <ReorderInsertMarker x={marker.x} y={marker.y} height={marker.height} />
+        )}
 
         {mode === 'play' && (
           <>
@@ -798,6 +1050,8 @@ function Bookshelf({
   onSelectShelf,
   onMoveShelf,
   onShelfDragChange,
+  onReorderBookToIndex,
+  onBookDragChange,
 }) {
   const cases = Array.isArray(shelves) ? shelves : []
   const books = Array.isArray(library) ? library : []
@@ -816,6 +1070,8 @@ function Bookshelf({
           onSelectShelf={onSelectShelf}
           onMoveShelf={onMoveShelf}
           onShelfDragChange={onShelfDragChange}
+          onReorderBookToIndex={onReorderBookToIndex}
+          onBookDragChange={onBookDragChange}
         />
       ))}
 
