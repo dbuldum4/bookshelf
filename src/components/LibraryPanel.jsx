@@ -69,16 +69,27 @@ function formatPages(count) {
   return new Intl.NumberFormat().format(count || 0)
 }
 
-function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook, onReplaceLibrary }) {
+function LibraryPanel({
+  library,
+  shelves = [],
+  selectedBookId,
+  selectedShelfId,
+  onSelectBook,
+  onSelectShelf,
+  onAddBook,
+  onReplaceLibrary,
+  onReorderBook,
+}) {
   const [open, setOpen] = useState(true)
   const [adding, setAdding] = useState(false)
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState('All')
+  const [shelfFilter, setShelfFilter] = useState('All')
   const [authorFilter, setAuthorFilter] = useState('All')
   const [tagFilter, setTagFilter] = useState('All')
   const [ratingFilter, setRatingFilter] = useState('All')
   const [sortBy, setSortBy] = useState('shelf')
-  const [draft, setDraft] = useState({ title: '', author: '', isbn: '', pageCount: '', coverUrl: '' })
+  const [draft, setDraft] = useState({ title: '', author: '', isbn: '', pageCount: '', coverUrl: '', shelfId: '' })
   const [lookupError, setLookupError] = useState('')
   const [lookingUp, setLookingUp] = useState(false)
   const [showSuggestions, setShowSuggestions] = useState(false)
@@ -130,17 +141,35 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook, onRepl
     [library]
   )
 
-  const activeFilterCount = [status, authorFilter, tagFilter, ratingFilter]
+  const shelfNameById = useMemo(
+    () => Object.fromEntries(shelves.map((shelf) => [shelf.id, shelf.name])),
+    [shelves]
+  )
+
+  const activeFilterCount = [status, shelfFilter, authorFilter, tagFilter, ratingFilter]
     .filter((value) => value !== 'All').length
 
   const clearFilters = () => {
     setQuery('')
     setStatus('All')
+    setShelfFilter('All')
     setAuthorFilter('All')
     setTagFilter('All')
     setRatingFilter('All')
     setSortBy('shelf')
   }
+
+  useEffect(() => {
+    if (shelfFilter !== 'All' && !shelves.some((shelf) => shelf.id === shelfFilter)) {
+      setShelfFilter('All')
+    }
+  }, [shelfFilter, shelves])
+
+  useEffect(() => {
+    if (draft.shelfId && !shelves.some((shelf) => shelf.id === draft.shelfId)) {
+      setDraft((current) => ({ ...current, shelfId: '' }))
+    }
+  }, [draft.shelfId, shelves])
 
   useEffect(() => {
     if (authorFilter !== 'All' && !authorOptions.includes(authorFilter)) setAuthorFilter('All')
@@ -165,6 +194,7 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook, onRepl
     const search = query.trim().toLowerCase()
     const filtered = library.filter((book) => {
       const matchesStatus = status === 'All' || book.status === status
+      const matchesShelf = shelfFilter === 'All' || book.shelfId === shelfFilter
       const matchesAuthor = authorFilter === 'All' || book.author === authorFilter
       const matchesTag = tagFilter === 'All' || (book.tags || []).includes(tagFilter)
       const matchesRating = ratingFilter === 'All'
@@ -175,11 +205,12 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook, onRepl
         ...(book.tags || []),
         ...(book.quotes || []),
         book.notes || '',
+        shelfNameById[book.shelfId] || '',
       ].join(' ').toLowerCase().includes(search)
-      return matchesStatus && matchesAuthor && matchesTag && matchesRating && matchesSearch
+      return matchesStatus && matchesShelf && matchesAuthor && matchesTag && matchesRating && matchesSearch
     })
     return sortLibrary(filtered, sortBy)
-  }, [library, query, status, authorFilter, tagFilter, ratingFilter, sortBy])
+  }, [library, query, status, shelfFilter, authorFilter, tagFilter, ratingFilter, sortBy, shelfNameById])
 
   useEffect(() => {
     const search = draft.title.trim()
@@ -230,7 +261,7 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook, onRepl
         showTransferFeedback('Add at least one book before exporting.', true)
         return
       }
-      const { count, filename } = downloadLibraryExport(library)
+      const { count, filename } = downloadLibraryExport({ books: library, shelves })
       showTransferFeedback(`Exported ${count} book${count === 1 ? '' : 's'} to ${filename}.`)
     } catch (error) {
       showTransferFeedback(error instanceof Error ? error.message : 'Could not export your library.', true)
@@ -251,7 +282,8 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook, onRepl
     clearTransferFeedback()
     try {
       const text = await file.text()
-      const { books, count, format } = parseLibraryFile(text, file.name)
+      const parsed = parseLibraryFile(text, file.name)
+      const { books, count, format } = parsed
       const kind = format === 'csv' ? 'CSV' : 'JSON'
       const confirmed = window.confirm(
         `Replace your current library (${library.length} book${library.length === 1 ? '' : 's'}) with ${count} imported book${count === 1 ? '' : 's'} from ${kind}?\n\nThis cannot be undone unless you export a backup first.`
@@ -260,7 +292,7 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook, onRepl
         showTransferFeedback('Import cancelled. Your library was not changed.')
         return
       }
-      onReplaceLibrary(books)
+      onReplaceLibrary({ books, shelves: parsed.shelves })
       showTransferFeedback(`Imported ${count} book${count === 1 ? '' : 's'} from ${file.name}.`)
     } catch (error) {
       showTransferFeedback(error instanceof Error ? error.message : 'Could not import that library file.', true)
@@ -332,8 +364,13 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook, onRepl
       setLookupError('Add a title before saving the book.')
       return
     }
-    onAddBook({ ...draft, pageCount: Number(draft.pageCount) || 0 })
-    setDraft({ title: '', author: '', isbn: '', pageCount: '', coverUrl: '' })
+    const added = onAddBook({
+      ...draft,
+      pageCount: Number(draft.pageCount) || 0,
+      shelfId: draft.shelfId || selectedShelfId || shelves[0]?.id,
+    })
+    if (added === false) return
+    setDraft({ title: '', author: '', isbn: '', pageCount: '', coverUrl: '', shelfId: '' })
     setLookupError('')
     setAdding(false)
   }
@@ -359,7 +396,7 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook, onRepl
             My Library
           </h2>
           <p style={{ margin: '3px 0 0', color: 'rgba(255,255,255,0.5)', fontSize: 12 }}>
-            {library.length} book{library.length === 1 ? '' : 's'} · select one to find it on the shelf
+            {library.length} book{library.length === 1 ? '' : 's'} · {shelves.length} shelf{shelves.length === 1 ? '' : 's'}
           </p>
         </div>
         <button type="button" aria-label="Close library" onClick={() => setOpen(false)} style={{ ...actionButton(), padding: '6px 9px', fontSize: 16 }}>
@@ -436,6 +473,21 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook, onRepl
           style={inputStyle}
         />
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+          <select
+            aria-label="Filter by shelf"
+            value={shelfFilter}
+            onChange={(event) => {
+              const value = event.target.value
+              setShelfFilter(value)
+              if (value !== 'All') onSelectShelf?.(value)
+            }}
+            style={{ ...inputStyle, padding: '0 6px' }}
+          >
+            <option value="All">All shelves</option>
+            {shelves.map((shelf) => (
+              <option key={shelf.id} value={shelf.id}>{shelf.name}</option>
+            ))}
+          </select>
           <select
             aria-label="Filter by reading status"
             value={status}
@@ -662,6 +714,16 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook, onRepl
               </button>
             </div>
             <input min="0" type="number" value={draft.pageCount} onChange={(event) => changeDraft('pageCount', event.target.value)} placeholder="Page count (optional)" aria-label="Page count" style={inputStyle} />
+            <select
+              aria-label="Shelf for new book"
+              value={draft.shelfId || selectedShelfId || shelves[0]?.id || ''}
+              onChange={(event) => changeDraft('shelfId', event.target.value)}
+              style={{ ...inputStyle, padding: '0 6px' }}
+            >
+              {shelves.map((shelf) => (
+                <option key={shelf.id} value={shelf.id}>{shelf.name}</option>
+              ))}
+            </select>
             {lookupError && <p role="alert" style={{ margin: 0, color: '#ffb4b4', fontSize: 12 }}>{lookupError}</p>}
             <button type="submit" style={actionButton(true)}>Add to library</button>
           </div>
@@ -676,51 +738,104 @@ function LibraryPanel({ library, selectedBookId, onSelectBook, onAddBook, onRepl
       >
         {visibleBooks.map((book) => {
           const selected = book.id === selectedBookId
+          const shelfName = shelfNameById[book.shelfId] || 'Shelf'
           const label = [
             book.title,
             book.author ? `by ${book.author}` : '',
+            shelfName,
             book.status,
             selected ? 'selected' : '',
           ].filter(Boolean).join(', ')
           return (
-            <button
-              type="button"
-              id={`library-book-${book.id}`}
-              role="option"
-              aria-selected={selected}
-              aria-label={label}
-              tabIndex={selected || (!selectedBookId && book.id === visibleBooks[0]?.id) ? 0 : -1}
+            <div
               key={book.id}
-              onClick={() => onSelectBook(book.id)}
               style={{
-                width: '100%',
                 display: 'flex',
-                gap: 10,
-                alignItems: 'center',
-                border: selected ? `1px solid ${book.color}` : '1px solid transparent',
-                borderRadius: 11,
-                color: '#fff',
-                background: selected ? 'rgba(255,255,255,0.1)' : 'transparent',
-                cursor: 'pointer',
-                padding: 8,
-                textAlign: 'left',
+                gap: 4,
+                alignItems: 'stretch',
+                marginBottom: 2,
               }}
             >
-              {book.coverUrl ? (
-                <img src={book.coverUrl} alt="" style={{ width: 28, height: 40, objectFit: 'cover', borderRadius: 3, background: book.color }} />
-              ) : (
-                <span aria-hidden="true" style={{ width: 28, height: 40, flexShrink: 0, borderRadius: 3, background: book.color, boxShadow: `inset -4px 0 rgba(0,0,0,0.25)` }} />
-              )}
-              <span style={{ minWidth: 0, flex: 1 }} aria-hidden="true">
-                <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13, fontWeight: 700 }}>{book.title}</span>
-                <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2, color: 'rgba(255,255,255,0.52)', fontSize: 11 }}>
-                  {book.author}
-                  {book.rating > 0 ? ` · ${'★'.repeat(book.rating)}` : ''}
-                  {(book.quotes || []).length ? ` · ${book.quotes.length} quote${book.quotes.length === 1 ? '' : 's'}` : ''}
+              <button
+                type="button"
+                id={`library-book-${book.id}`}
+                role="option"
+                aria-selected={selected}
+                aria-label={label}
+                tabIndex={selected || (!selectedBookId && book.id === visibleBooks[0]?.id) ? 0 : -1}
+                onClick={() => onSelectBook(book.id)}
+                style={{
+                  minWidth: 0,
+                  flex: 1,
+                  display: 'flex',
+                  gap: 10,
+                  alignItems: 'center',
+                  border: selected ? `1px solid ${book.color}` : '1px solid transparent',
+                  borderRadius: 11,
+                  color: '#fff',
+                  background: selected ? 'rgba(255,255,255,0.1)' : 'transparent',
+                  cursor: 'pointer',
+                  padding: 8,
+                  textAlign: 'left',
+                }}
+              >
+                {book.coverUrl ? (
+                  <img src={book.coverUrl} alt="" style={{ width: 28, height: 40, objectFit: 'cover', borderRadius: 3, background: book.color }} />
+                ) : (
+                  <span aria-hidden="true" style={{ width: 28, height: 40, flexShrink: 0, borderRadius: 3, background: book.color, boxShadow: `inset -4px 0 rgba(0,0,0,0.25)` }} />
+                )}
+                <span style={{ minWidth: 0, flex: 1 }} aria-hidden="true">
+                  <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13, fontWeight: 700 }}>{book.title}</span>
+                  <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2, color: 'rgba(255,255,255,0.52)', fontSize: 11 }}>
+                    {book.author}
+                    {` · ${shelfName}`}
+                    {book.rating > 0 ? ` · ${'★'.repeat(book.rating)}` : ''}
+                    {(book.quotes || []).length ? ` · ${book.quotes.length} quote${book.quotes.length === 1 ? '' : 's'}` : ''}
+                  </span>
                 </span>
-              </span>
-              <span aria-hidden="true" style={{ maxWidth: 78, color: selected ? '#fff' : 'rgba(255,255,255,0.48)', fontSize: 10, textAlign: 'right' }}>{progressLabel(book)}</span>
-            </button>
+                <span aria-hidden="true" style={{ maxWidth: 78, color: selected ? '#fff' : 'rgba(255,255,255,0.48)', fontSize: 10, textAlign: 'right' }}>{progressLabel(book)}</span>
+              </button>
+              {typeof onReorderBook === 'function' && sortBy === 'shelf' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 2, paddingTop: 4 }}>
+                  <button
+                    type="button"
+                    aria-label={`Move ${book.title} earlier on shelf`}
+                    onClick={() => onReorderBook(book.id, -1)}
+                    style={{
+                      border: '1px solid rgba(255,255,255,0.1)',
+                      borderRadius: 6,
+                      color: 'rgba(255,255,255,0.7)',
+                      background: 'rgba(255,255,255,0.06)',
+                      cursor: 'pointer',
+                      width: 28,
+                      height: 20,
+                      fontSize: 10,
+                      padding: 0,
+                    }}
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Move ${book.title} later on shelf`}
+                    onClick={() => onReorderBook(book.id, 1)}
+                    style={{
+                      border: '1px solid rgba(255,255,255,0.1)',
+                      borderRadius: 6,
+                      color: 'rgba(255,255,255,0.7)',
+                      background: 'rgba(255,255,255,0.06)',
+                      cursor: 'pointer',
+                      width: 28,
+                      height: 20,
+                      fontSize: 10,
+                      padding: 0,
+                    }}
+                  >
+                    ↓
+                  </button>
+                </div>
+              )}
+            </div>
           )
         })}
         {!visibleBooks.length && (

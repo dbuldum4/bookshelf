@@ -1,4 +1,11 @@
-import { useId, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
+import {
+  booksOnShelf,
+  SHELF_ROWS_MAX,
+  SHELF_ROWS_MIN,
+  SHELF_WIDTH_MAX,
+  SHELF_WIDTH_MIN,
+} from '../library'
 
 const controlPanelStyle = {
   display: 'flex',
@@ -30,10 +37,23 @@ const controlButtonStyle = (active, reducedMotion = false) => ({
 })
 
 const modeLabels = {
-  fixed: 'Fixed View',
+  fixed: 'Walk',
   rotate: 'Rotate',
-  custom: 'Customize',
+  custom: 'Orbit',
+  arrange: 'Arrange',
   play: 'Play',
+}
+
+const fieldStyle = {
+  width: '100%',
+  height: 32,
+  border: '1px solid rgba(255,255,255,0.13)',
+  borderRadius: 8,
+  color: '#fff',
+  background: 'rgba(255,255,255,0.07)',
+  padding: '0 8px',
+  fontSize: 12,
+  outline: 'none',
 }
 
 function Controls({
@@ -41,13 +61,26 @@ function Controls({
   setMode,
   reducedMotion,
   onReset,
-  shelfPage,
-  shelfPageCount,
-  setShelfPage,
+  shelves = [],
+  selectedShelf,
+  selectedShelfId,
+  onSelectShelf,
+  onRenameShelf,
+  onTransformShelf,
+  onAddShelf,
+  onDeleteShelf,
+  books = [],
 }) {
-  const showShelfPager = shelfPageCount > 1 && mode !== 'play'
   const [controlsOpen, setControlsOpen] = useState(false)
+  const [nameDraft, setNameDraft] = useState(selectedShelf?.name || '')
   const controlsId = useId()
+  const arrange = mode === 'arrange'
+  const memberCount = selectedShelf ? booksOnShelf(books, selectedShelf.id).length : 0
+
+  // Draft name while typing so the field can be cleared and retyped; commit on blur.
+  useEffect(() => {
+    setNameDraft(selectedShelf?.name || '')
+  }, [selectedShelf?.id, selectedShelf?.name])
 
   return (
     <>
@@ -83,39 +116,180 @@ function Controls({
         </div>
       </div>
 
-      {showShelfPager && (
+      {(mode === 'fixed' || mode === 'play') && (
         <div
-          className="scene-shelf-pager"
-          aria-label="Bookshelf page"
+          className="scene-walk-hint"
+          style={{
+            position: 'absolute',
+            left: 16,
+            bottom: 24,
+            zIndex: 20,
+            color: 'rgba(255,255,255,0.62)',
+            fontSize: 12,
+            fontWeight: 500,
+            background: 'rgba(20, 18, 35, 0.5)',
+            backdropFilter: 'blur(16px)',
+            border: '1px solid rgba(255,255,255,0.1)',
+            borderRadius: 10,
+            padding: '8px 12px',
+            pointerEvents: 'none',
+            maxWidth: 220,
+            fontFamily:
+              '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+          }}
+        >
+          WASD move · drag to look
+        </div>
+      )}
+
+      {mode === 'rotate' && (
+        <div
+          className="scene-walk-hint"
+          style={{
+            position: 'absolute',
+            left: 16,
+            bottom: 24,
+            zIndex: 20,
+            color: 'rgba(255,255,255,0.62)',
+            fontSize: 12,
+            fontWeight: 500,
+            background: 'rgba(20, 18, 35, 0.5)',
+            backdropFilter: 'blur(16px)',
+            border: '1px solid rgba(255,255,255,0.1)',
+            borderRadius: 10,
+            padding: '8px 12px',
+            pointerEvents: 'none',
+            maxWidth: 220,
+            fontFamily:
+              '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+          }}
+        >
+          Auto-orbit around the room
+        </div>
+      )}
+
+      {arrange && selectedShelf && (
+        <div
+          className="scene-arrange-panel"
+          aria-label="Arrange shelf"
           style={{
             ...controlPanelStyle,
             position: 'absolute',
             right: 16,
             bottom: 24,
-            alignItems: 'center',
+            width: 280,
+            maxWidth: 'calc(100vw - 32px)',
+            flexDirection: 'column',
+            gap: 8,
+            padding: 12,
+            alignItems: 'stretch',
           }}
         >
-          <button
-            type="button"
-            aria-label="Previous shelf"
-            disabled={shelfPage === 0}
-            onClick={() => setShelfPage((page) => Math.max(0, page - 1))}
-            style={{ ...controlButtonStyle(false, reducedMotion), opacity: shelfPage === 0 ? 0.35 : 1 }}
-          >
-            ←
-          </button>
-          <span style={{ padding: '0 6px', color: 'rgba(255,255,255,0.72)', fontSize: 12, fontWeight: 700 }}>
-            Shelf {shelfPage + 1} / {shelfPageCount}
-          </span>
-          <button
-            type="button"
-            aria-label="Next shelf"
-            disabled={shelfPage === shelfPageCount - 1}
-            onClick={() => setShelfPage((page) => Math.min(shelfPageCount - 1, page + 1))}
-            style={{ ...controlButtonStyle(false, reducedMotion), opacity: shelfPage === shelfPageCount - 1 ? 0.35 : 1 }}
-          >
-            →
-          </button>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+            <strong style={{ color: '#fff', fontSize: 13 }}>Arrange shelves</strong>
+            <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11 }}>
+              {memberCount} book{memberCount === 1 ? '' : 's'}
+            </span>
+          </div>
+
+          <label style={{ color: 'rgba(255,255,255,0.55)', fontSize: 10, fontWeight: 700, letterSpacing: 0.6 }}>
+            ACTIVE SHELF
+            <select
+              aria-label="Active shelf"
+              value={selectedShelfId}
+              onChange={(event) => onSelectShelf(event.target.value)}
+              style={{ ...fieldStyle, marginTop: 4 }}
+            >
+              {shelves.map((shelf) => (
+                <option key={shelf.id} value={shelf.id}>{shelf.name}</option>
+              ))}
+            </select>
+          </label>
+
+          <label style={{ color: 'rgba(255,255,255,0.55)', fontSize: 10, fontWeight: 700, letterSpacing: 0.6 }}>
+            NAME
+            <input
+              aria-label="Shelf name"
+              value={nameDraft}
+              onChange={(event) => setNameDraft(event.target.value)}
+              onBlur={() => onRenameShelf?.(selectedShelf.id, nameDraft)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.currentTarget.blur()
+                }
+              }}
+              style={{ ...fieldStyle, marginTop: 4 }}
+            />
+          </label>
+
+          <label style={{ color: 'rgba(255,255,255,0.55)', fontSize: 10, fontWeight: 700, letterSpacing: 0.6 }}>
+            WIDTH ({selectedShelf.width.toFixed(1)})
+            <input
+              aria-label="Shelf width"
+              type="range"
+              min={SHELF_WIDTH_MIN}
+              max={SHELF_WIDTH_MAX}
+              step={0.1}
+              value={selectedShelf.width}
+              onChange={(event) => onTransformShelf(selectedShelf.id, { width: Number(event.target.value) })}
+              style={{ width: '100%', marginTop: 4 }}
+            />
+          </label>
+
+          <label style={{ color: 'rgba(255,255,255,0.55)', fontSize: 10, fontWeight: 700, letterSpacing: 0.6 }}>
+            ROWS ({selectedShelf.rows})
+            <input
+              aria-label="Shelf rows"
+              type="range"
+              min={SHELF_ROWS_MIN}
+              max={SHELF_ROWS_MAX}
+              step={1}
+              value={selectedShelf.rows}
+              onChange={(event) => onTransformShelf(selectedShelf.id, { rows: Number(event.target.value) })}
+              style={{ width: '100%', marginTop: 4 }}
+            />
+          </label>
+
+          <label style={{ color: 'rgba(255,255,255,0.55)', fontSize: 10, fontWeight: 700, letterSpacing: 0.6 }}>
+            YAW ({Math.round((selectedShelf.yaw * 180) / Math.PI)}°)
+            <input
+              aria-label="Shelf yaw"
+              type="range"
+              min={-Math.PI}
+              max={Math.PI}
+              step={0.01}
+              value={selectedShelf.yaw}
+              onChange={(event) => onTransformShelf(selectedShelf.id, { yaw: Number(event.target.value) })}
+              style={{ width: '100%', marginTop: 4 }}
+            />
+          </label>
+
+          <p style={{ margin: 0, color: 'rgba(255,255,255,0.48)', fontSize: 11, lineHeight: 1.35 }}>
+            Drag a case on the floor to move it. Orbit the room to frame the layout.
+          </p>
+
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button
+              type="button"
+              onClick={onAddShelf}
+              style={{ ...controlButtonStyle(false, reducedMotion), flex: 1, background: 'rgba(126, 91, 226, 0.55)', color: '#fff' }}
+            >
+              + Shelf
+            </button>
+            <button
+              type="button"
+              onClick={() => onDeleteShelf(selectedShelf.id)}
+              disabled={memberCount > 0 || shelves.length <= 1}
+              style={{
+                ...controlButtonStyle(false, reducedMotion),
+                flex: 1,
+                opacity: memberCount > 0 || shelves.length <= 1 ? 0.35 : 1,
+              }}
+              title={memberCount > 0 ? 'Empty the shelf before deleting' : shelves.length <= 1 ? 'Keep at least one shelf' : 'Delete shelf'}
+            >
+              Delete
+            </button>
+          </div>
         </div>
       )}
 

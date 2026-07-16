@@ -57,36 +57,31 @@ Personal Library v1 is complete. The next focus is making large libraries feel l
    - Completed: an error boundary and a WebGL-unavailable fallback.
    - Completed: deploy successful `main` builds to GitHub Pages.
 
-## Recommended next release: Multi-shelf library spaces
+## Multi-shelf library spaces
 
-Today the app pages every 40 books into a single fixed case. Turn that into a library people can organize spatially.
+Named cases live together in one walkable room. Books belong to exactly one shelf; shelves can be placed, rotated (yaw), and resized with hard capacity.
 
-### Scope
+### Completed in this release
 
 1. **Named shelves / cases**
-   - Let users create and rename shelves (for example Fiction, Currently reading, To-read).
-   - Assign books to a shelf; default new and imported books to a sensible shelf.
-   - Browse by shelf in the library panel and on the 3D scene (replace flat page index with named cases where possible).
+   - Create, rename, and delete empty shelves (never the last one).
+   - Assign books to a shelf; new/imported books default to “Library.”
+   - Filter and browse by shelf in the library panel; every case is present in the 3D scene.
 
 2. **Persistent book order on the shelf**
-   - Store per-shelf order in the library model and in JSON export/import.
-   - Let users reorder books (list controls first; 3D drag-to-reorder if it stays reliable).
-   - Keep automatic packing of spine widths so reordered rows still sit cleanly on the wood.
+   - Per-shelf order is the library array order among shelf members; survives reload and JSON export/import (v2).
+   - List controls and book details can reorder books on a shelf.
+   - Spine packing keeps rows within the case width (scale-to-fit if needed for display).
 
-3. **Scale beyond one bay**
-   - Support more books without feeling like “page 3 of 7.”
-   - Prefer multiple named cases or a taller multi-bay unit over anonymous pagination.
-   - Keep Play mode and selection focus working across the active shelf.
+3. **Spatial library room**
+   - Semi-free furniture: translate on the floor, yaw, width + row-count resize with min/max bounds.
+   - Dedicated **Arrange** mode (not Play) for placing cases; Walk/Play use WASD + drag-to-look.
+   - Hard capacity: refuse shrink/add when books would not fit; no silent reflow.
+   - Migration: existing libraries land on one default “Library” shelf.
 
-### Out of scope for this release
+### Out of scope (later)
 
 - Full cloud sync or accounts.
-- Reading goals / year-in-review (candidate after multi-shelf).
+- Reading goals / year-in-review.
 - Shareable public shelf links.
-
-### Success criteria
-
-- A library larger than one case is organized by named shelves, not only by page number.
-- Shelf membership and book order survive reload, JSON export, and JSON import.
-- List selection still focuses the matching physical book on the correct shelf.
-- Existing libraries migrate cleanly (for example a default “Library” shelf with current order).
+- 3D drag-to-reorder spines; pointer-lock FPS; tilt/pitch of cases.

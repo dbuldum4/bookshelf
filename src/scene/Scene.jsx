@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ContactShadows, Environment, Float, OrbitControls } from '@react-three/drei'
 import { Physics } from '@react-three/rapier'
 import { DEFAULT_GRAPHICS_QUALITY, getGraphicsPreset } from '../graphicsQuality'
@@ -8,6 +9,9 @@ import { DeepSpaceStars, Galaxy, NebulaLayer, RealisticGalaxy } from './Galaxy'
 const GALAXY_BACKDROP_POSITION = [-7, 5.4, -24]
 const GALAXY_BACKDROP_ROTATION = [Math.PI * 0.42, 0.22, -0.28]
 const GALAXY_BACKDROP_SCALE = [0.46, 0.46, 0.46]
+
+const ARRANGE_TARGET = [0, 1.5, 0]
+const ORBIT_TARGET = [0, 0.5, 0]
 
 const NEBULA_LAYERS = [
   {
@@ -40,26 +44,61 @@ function Scene({
   graphics: graphicsProp,
   reducedMotion = false,
   library,
+  shelves,
   selectedBookId,
   onSelectBook,
+  selectedShelfId,
+  onSelectShelf,
+  onMoveShelf,
+  focusPoint = null,
 }) {
   const graphics = graphicsProp || getGraphicsPreset(DEFAULT_GRAPHICS_QUALITY)
   const pixelatedGalaxy = galaxyMode === 'pixelated'
   const styleKey = pixelatedGalaxy ? 'pixelated' : 'realistic'
   const nebulaLayers = NEBULA_LAYERS.slice(0, graphics.nebulaLayerCount)
-  const shelf = (
+  const controlsRef = useRef(null)
+  const modeRef = useRef(mode)
+  const [shelfDragging, setShelfDragging] = useState(false)
+  modeRef.current = mode
+
+  const handleShelfDragChange = useCallback((dragging) => {
+    setShelfDragging(dragging)
+    if (controlsRef.current) {
+      const orbitMode = modeRef.current === 'custom' || modeRef.current === 'arrange'
+      controlsRef.current.enabled = orbitMode && !dragging
+    }
+  }, [])
+
+  // Only bob the room in free Orbit mode — walk/rotate/arrange stay stable.
+  const floatRoom = !reducedMotion && mode === 'custom'
+  const room = (
     <Bookshelf
       mode={mode}
       library={library}
+      shelves={shelves}
       selectedBookId={selectedBookId}
       onSelectBook={onSelectBook}
+      selectedShelfId={selectedShelfId}
+      onSelectShelf={onSelectShelf}
+      onMoveShelf={onMoveShelf}
+      onShelfDragChange={handleShelfDragChange}
     />
   )
+
+  // Seed orbit target once per mode change so continuous re-renders (shelf
+  // drags) do not yank the pan target back to room center every frame.
+  useEffect(() => {
+    const controls = controlsRef.current
+    if (!controls) return
+    const target = mode === 'arrange' ? ARRANGE_TARGET : ORBIT_TARGET
+    controls.target.set(target[0], target[1], target[2])
+    controls.update()
+  }, [mode])
 
   return (
     <>
       <color attach="background" args={['#05010f']} />
-      <fog attach="fog" args={['#05010f', 18, 55]} />
+      <fog attach="fog" args={['#05010f', 22, 70]} />
 
       <ambientLight intensity={0.25} />
       <directionalLight
@@ -67,10 +106,10 @@ function Scene({
         intensity={1.4}
         castShadow={graphics.shadows}
         shadow-mapSize={[graphics.shadowMapSize, graphics.shadowMapSize]}
-        shadow-camera-left={-12}
-        shadow-camera-right={12}
-        shadow-camera-top={12}
-        shadow-camera-bottom={-12}
+        shadow-camera-left={-24}
+        shadow-camera-right={24}
+        shadow-camera-top={24}
+        shadow-camera-bottom={-24}
       />
       <pointLight position={[-6, 4, 6]} intensity={0.6} color="#9bb8ff" />
       <pointLight position={[0, 8, -4]} intensity={0.4} color="#ffb86b" />
@@ -100,37 +139,42 @@ function Scene({
 
       {mode === 'play' ? (
         <Physics key={resetKey} gravity={[0, -9.81, 0]} timeStep="vary">
-          <Bookshelf mode={mode} library={library} />
+          <Bookshelf
+            mode={mode}
+            library={library}
+            shelves={shelves}
+          />
         </Physics>
-      ) : reducedMotion ? (
-        shelf
-      ) : (
+      ) : floatRoom ? (
         <Float speed={1.2} rotationIntensity={0.05} floatIntensity={0.15}>
-          {shelf}
+          {room}
         </Float>
+      ) : (
+        room
       )}
 
       {graphics.contactShadows && (
         <ContactShadows
-          position={[0, -3.45, 0]}
+          position={[0, -0.48, 0]}
           opacity={graphics.contactShadowOpacity}
-          scale={20}
+          scale={40}
           blur={graphics.contactShadowBlur}
-          far={8}
+          far={12}
         />
       )}
 
       {graphics.environment && <Environment preset="night" />}
 
-      <CameraRig mode={mode} reducedMotion={reducedMotion} />
+      <CameraRig mode={mode} reducedMotion={reducedMotion} focusPoint={focusPoint} />
       <OrbitControls
+        ref={controlsRef}
         makeDefault
-        enabled={mode === 'custom'}
-        enablePan={false}
-        minDistance={6}
-        maxDistance={22}
-        minPolarAngle={Math.PI * 0.15}
-        maxPolarAngle={Math.PI * 0.62}
+        enabled={(mode === 'custom' || mode === 'arrange') && !shelfDragging}
+        enablePan={mode === 'arrange'}
+        minDistance={mode === 'arrange' ? 4 : 6}
+        maxDistance={mode === 'arrange' ? 48 : 22}
+        minPolarAngle={Math.PI * 0.08}
+        maxPolarAngle={mode === 'arrange' ? Math.PI * 0.48 : Math.PI * 0.62}
       />
     </>
   )

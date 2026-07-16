@@ -23,7 +23,7 @@ const labelStyle = {
   textTransform: 'uppercase',
 }
 
-function BookDetails({ book, onUpdate, onDelete, onClose }) {
+function BookDetails({ book, shelves = [], onUpdate, onDelete, onClose, onReorder }) {
   if (!book) return null
 
   const progress = book.pageCount ? Math.min(100, Math.round((book.currentPage / book.pageCount) * 100)) : 0
@@ -113,6 +113,60 @@ function BookDetails({ book, onUpdate, onDelete, onClose }) {
             {READING_STATUSES.map((status) => <option key={status} value={status} style={{ color: '#111' }}>{status}</option>)}
           </select>
         </div>
+
+        <div>
+          <label htmlFor="book-shelf" style={labelStyle}>Shelf</label>
+          <select
+            id="book-shelf"
+            value={book.shelfId || ''}
+            onChange={(event) => onUpdate({ shelfId: event.target.value })}
+            style={{ ...fieldStyle, height: 40, padding: '0 11px' }}
+          >
+            {shelves.map((shelf) => (
+              <option key={shelf.id} value={shelf.id} style={{ color: '#111' }}>{shelf.name}</option>
+            ))}
+          </select>
+        </div>
+
+        {typeof onReorder === 'function' && (
+          <div>
+            <span style={labelStyle}>Order on shelf</span>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                type="button"
+                onClick={() => onReorder(book.id, -1)}
+                style={{
+                  flex: 1,
+                  border: '1px solid rgba(255,255,255,0.12)',
+                  borderRadius: 10,
+                  color: '#fff',
+                  background: 'rgba(255,255,255,0.08)',
+                  cursor: 'pointer',
+                  padding: '9px 10px',
+                  font: `600 12px ${fontFamily}`,
+                }}
+              >
+                ← Move left
+              </button>
+              <button
+                type="button"
+                onClick={() => onReorder(book.id, 1)}
+                style={{
+                  flex: 1,
+                  border: '1px solid rgba(255,255,255,0.12)',
+                  borderRadius: 10,
+                  color: '#fff',
+                  background: 'rgba(255,255,255,0.08)',
+                  cursor: 'pointer',
+                  padding: '9px 10px',
+                  font: `600 12px ${fontFamily}`,
+                }}
+              >
+                Move right →
+              </button>
+            </div>
+          </div>
+        )}
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
           <div>

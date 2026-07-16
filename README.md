@@ -18,10 +18,11 @@ A procedural 3D bookshelf scene built with React, Vite, Three.js, and Rapier phy
 - Two galaxy backdrops:
   - Realistic: soft sprite stars, bright core glow, spiral arms, halo stars, and nebula color variation.
   - Pixelated: a simpler additive spiral galaxy made from point particles.
-- Four camera modes:
-  - Fixed View: composed static framing with subtle handheld motion.
-  - Rotate: automatic orbit around the bookshelf.
-  - Customize: OrbitControls-powered camera orbit and zoom.
+- Camera modes:
+  - Walk: first-person WASD movement, Space to jump, and one-finger / left-drag look.
+  - Rotate: automatic orbit around the room (respects reduced motion).
+  - Orbit: OrbitControls-powered camera orbit, pan, and zoom.
+  - Arrange: place, rename, and resize multi-shelf cases.
   - Play: physics mode where books become draggable rigid bodies.
 - Play mode interactions:
   - Drag a book to grab it.

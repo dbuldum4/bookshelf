@@ -2,17 +2,21 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import { CuboidCollider, RigidBody } from '@react-three/rapier'
 import * as THREE from 'three'
-import { buildShelfBooks } from '../library'
+import {
+  buildShelfCaseLayout,
+  DEFAULT_SHELF_WIDTH,
+  shelfRowYs,
+} from '../library'
+import { lockLook, unlockLook } from './lookLock'
 
 function useWoodTexture() {
-  return useMemo(() => {
+  const texture = useMemo(() => {
     const size = 512
     const canvas = document.createElement('canvas')
     canvas.width = size
     canvas.height = size
     const ctx = canvas.getContext('2d')
 
-    // Base gradient
     const grad = ctx.createLinearGradient(0, 0, size, 0)
     grad.addColorStop(0, '#6b3f1d')
     grad.addColorStop(0.5, '#8a5a2b')
@@ -20,7 +24,6 @@ function useWoodTexture() {
     ctx.fillStyle = grad
     ctx.fillRect(0, 0, size, size)
 
-    // Grain lines
     for (let i = 0; i < 220; i++) {
       const y = Math.random() * size
       const alpha = 0.05 + Math.random() * 0.22
@@ -38,7 +41,6 @@ function useWoodTexture() {
       ctx.stroke()
     }
 
-    // Knots
     for (let i = 0; i < 4; i++) {
       const x = Math.random() * size
       const y = Math.random() * size
@@ -57,11 +59,11 @@ function useWoodTexture() {
     tex.colorSpace = THREE.SRGBColorSpace
     return tex
   }, [])
+
+  useEffect(() => () => texture.dispose(), [texture])
+  return texture
 }
 
-/* ------------------------------------------------------------------ */
-/* A single book                                                       */
-/* ------------------------------------------------------------------ */
 function shade(hex, amt) {
   const c = new THREE.Color(hex)
   if (amt > 0) c.lerp(new THREE.Color('#ffffff'), amt)
@@ -76,7 +78,6 @@ function makeSpineTexture({ color, title, author, titleColor, coverImage = null 
   const ctx = c.getContext('2d')
 
   if (coverImage) {
-    // Sample cover art as a vertical strip for the camera-facing spine.
     const srcW = coverImage.naturalWidth || coverImage.width
     const srcH = coverImage.naturalHeight || coverImage.height
     const sampleW = Math.max(1, Math.floor(srcW * 0.22))
@@ -154,7 +155,6 @@ function makeCoverFaceTexture({ color, coverImage = null }) {
   return t
 }
 
-/** url -> HTMLImageElement | null (null means a cached load failure). */
 const COVER_CACHE_MAX = 128
 const coverImageCache = new Map()
 const coverImageWaiters = new Map()
@@ -205,8 +205,6 @@ function useCoverImage(coverUrl) {
       return undefined
     }
 
-    // Seed immediately from cache (including negative entries) so remounts and
-    // URL swaps do not flash the wrong cover or solid-color fallback.
     if (coverImageCache.has(coverUrl)) {
       setCoverImage(coverImageCache.get(coverUrl))
     } else {
@@ -225,10 +223,6 @@ function useCoverImage(coverUrl) {
   return coverImage
 }
 
-/**
- * Box materials: +x, -x, +y, -y, +z, -z.
- * +z faces the camera (spine). +x is the front cover edge of the book.
- */
 function BookMesh({ book }) {
   const { author, color, title, titleColor, coverUrl, width, height, depth } = book
   const coverImage = useCoverImage(coverUrl)
@@ -272,7 +266,6 @@ function BookMesh({ book }) {
       metalness: 0,
     })
 
-    // +x front cover, -x back board, +y top, -y bottom, +z spine, -z back edge
     return [cover, board, board, board, spine, pageEdge]
   }, [spineTexture, coverFaceTexture, color])
 
@@ -292,7 +285,7 @@ function BookMesh({ book }) {
   )
 }
 
-function Book({ book, selected, onSelect }) {
+function Book({ book, selected, onSelect, interactive }) {
   const groupRef = useRef()
   const { gl } = useThree()
 
@@ -324,26 +317,23 @@ function Book({ book, selected, onSelect }) {
       ref={groupRef}
       position={book.position}
       rotation={[0, 0, book.tilt || 0]}
-      onClick={(event) => {
+      onClick={interactive ? (event) => {
         event.stopPropagation()
         onSelect(selected ? null : book.id)
-      }}
-      onPointerOver={(event) => {
+      } : undefined}
+      onPointerOver={interactive ? (event) => {
         event.stopPropagation()
         gl.domElement.style.cursor = 'pointer'
-      }}
-      onPointerOut={() => {
+      } : undefined}
+      onPointerOut={interactive ? () => {
         gl.domElement.style.cursor = 'auto'
-      }}
+      } : undefined}
     >
       <BookMesh book={book} />
     </group>
   )
 }
 
-/* ------------------------------------------------------------------ */
-/* Physics-enabled book (grab & fling)                                 */
-/* ------------------------------------------------------------------ */
 const dragPlane = new THREE.Plane()
 const raycaster = new THREE.Raycaster()
 const dragPoint = new THREE.Vector3()
@@ -359,18 +349,16 @@ function PhysicsBook({ book, mode }) {
 
   const onPointerDown = useCallback(
     (e) => {
-      if (mode !== 'play') return
+      if (mode !== 'play' || e.button !== 0) return
       e.stopPropagation()
       const body = bodyRef.current
       if (!body) return
       dragging.current = true
-      // Set kinematic while dragging so we control position
-      body.setBodyType(2, true) // 2 = KinematicPositionBased
-      // Build a drag plane facing the camera through the book center
+      lockLook()
+      body.setBodyType(2, true)
       const p = body.translation()
       camera.getWorldDirection(cameraDir)
       dragPlane.setFromNormalAndCoplanarPoint(cameraDir.negate(), new THREE.Vector3(p.x, p.y, p.z))
-      // Project pointer onto plane to get offset
       raycaster.setFromCamera(e.pointer, camera)
       raycaster.ray.intersectPlane(dragPlane, dragPoint)
       lastPos.current.copy(dragPoint)
@@ -386,13 +374,10 @@ function PhysicsBook({ book, mode }) {
       if (!dragging.current) return
       const body = bodyRef.current
       if (!body) return
-      raycaster.setFromCamera(
-        new THREE.Vector2(
-          (e.clientX / window.innerWidth) * 2 - 1,
-          -(e.clientY / window.innerHeight) * 2 + 1
-        ),
-        camera
-      )
+      const rect = gl.domElement.getBoundingClientRect()
+      const nx = ((e.clientX - rect.left) / Math.max(1, rect.width)) * 2 - 1
+      const ny = -((e.clientY - rect.top) / Math.max(1, rect.height)) * 2 + 1
+      raycaster.setFromCamera(new THREE.Vector2(nx, ny), camera)
       raycaster.ray.intersectPlane(dragPlane, dragPoint)
       const now = performance.now()
       const dt = Math.max(0.001, (now - lastTime.current) / 1000)
@@ -404,23 +389,32 @@ function PhysicsBook({ book, mode }) {
     const onUp = () => {
       if (!dragging.current) return
       dragging.current = false
+      unlockLook()
+      gl.domElement.style.cursor = 'auto'
       const body = bodyRef.current
       if (!body) return
-      body.setBodyType(0, true) // 0 = Dynamic
-      // Apply fling velocity (clamped)
+      body.setBodyType(0, true)
       const v = velocity.current
       const max = 18
       const speed = v.length()
       if (speed > max) v.multiplyScalar(max / speed)
       body.setLinvel({ x: v.x, y: v.y, z: v.z }, true)
       body.setAngvel({ x: (Math.random() - 0.5) * 4, y: (Math.random() - 0.5) * 4, z: (Math.random() - 0.5) * 4 }, true)
-      gl.domElement.style.cursor = 'auto'
     }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
+    window.addEventListener('blur', onUp)
     return () => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+      window.removeEventListener('blur', onUp)
+      if (dragging.current) {
+        dragging.current = false
+        unlockLook()
+        gl.domElement.style.cursor = 'auto'
+      }
     }
   }, [camera, gl])
 
@@ -458,47 +452,34 @@ function PhysicsBook({ book, mode }) {
   )
 }
 
-/* ------------------------------------------------------------------ */
-/* Shelf (horizontal plank with books)                                 */
-/* ------------------------------------------------------------------ */
-function Shelf({
+function ShelfRow({
   y,
   woodTex,
   mode,
-  library,
-  shelfIndex,
+  books,
+  width,
   selectedBookId,
   onSelectBook,
+  interactiveBooks,
 }) {
-  const books = useMemo(
-    () => buildShelfBooks(library, shelfIndex),
-    [library, shelfIndex]
-  )
+  const plankWidth = width || DEFAULT_SHELF_WIDTH
 
   return (
     <group position={[0, y, 0]}>
-      {/* Plank mesh */}
       <mesh position={[0, -0.12, 0]} castShadow receiveShadow>
-        <boxGeometry args={[7.6, 0.24, 1.4]} />
-        <meshStandardMaterial
-          map={woodTex}
-          roughness={0.45}
-          metalness={0.05}
-        />
+        <boxGeometry args={[plankWidth, 0.24, 1.4]} />
+        <meshStandardMaterial map={woodTex} roughness={0.45} metalness={0.05} />
       </mesh>
-      {/* Shadow strip under plank */}
       <mesh position={[0, -0.13, 0.71]}>
-        <planeGeometry args={[7.6, 0.05]} />
+        <planeGeometry args={[plankWidth, 0.05]} />
         <meshBasicMaterial color="#000000" transparent opacity={0.35} />
       </mesh>
-      {/* Plank collider (physics only) */}
       {mode === 'play' && (
         <CuboidCollider
           position={[0, -0.12, 0]}
-          args={[3.8, 0.12, 0.7]}
+          args={[plankWidth / 2, 0.12, 0.7]}
         />
       )}
-      {/* Books */}
       {books.map((b) =>
         mode === 'play' ? (
           <PhysicsBook key={b.id} book={b} mode={mode} />
@@ -508,6 +489,7 @@ function Shelf({
             book={b}
             selected={selectedBookId === b.id}
             onSelect={onSelectBook}
+            interactive={interactiveBooks}
           />
         )
       )}
@@ -515,66 +497,214 @@ function Shelf({
   )
 }
 
-/* ------------------------------------------------------------------ */
-/* Bookshelf frame (sides + back)                                      */
-/* ------------------------------------------------------------------ */
-function Bookshelf({ mode, library, selectedBookId, onSelectBook }) {
+const floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
+const arrangeHit = new THREE.Vector3()
+
+function BookshelfCase({
+  shelf,
+  books,
+  mode,
+  selectedBookId,
+  onSelectBook,
+  selectedShelfId,
+  onSelectShelf,
+  onMoveShelf,
+  onShelfDragChange,
+}) {
   const woodTex = useWoodTexture()
   const woodTex2 = useWoodTexture()
+  const { camera, gl } = useThree()
+  const dragging = useRef(false)
+  const dragOffset = useRef(new THREE.Vector3())
+
+  const width = shelf.width || DEFAULT_SHELF_WIDTH
+  const rows = shelf.rows || 4
+  const rowYs = shelfRowYs(rows)
+  const halfW = width / 2
+  const sideX = halfW + 0.15
+  const topY = rowYs[rowYs.length - 1] + 1.35
+  const bottomY = -0.35
+  const midY = (topY + bottomY) / 2
+  const frameH = topY - bottomY
+
+  const rowLayouts = useMemo(
+    () => buildShelfCaseLayout(books, shelf),
+    [books, shelf]
+  )
+
+  const selected = selectedShelfId === shelf.id
+  const arrange = mode === 'arrange'
+  const interactiveBooks = mode !== 'arrange' && mode !== 'play'
+
+  const onPointerDownCase = (event) => {
+    if (!arrange || event.button !== 0) return
+    event.stopPropagation()
+    onSelectShelf?.(shelf.id)
+    raycaster.setFromCamera(event.pointer, camera)
+    if (!raycaster.ray.intersectPlane(floorPlane, arrangeHit)) return
+    dragOffset.current.set(shelf.x - arrangeHit.x, 0, shelf.z - arrangeHit.z)
+    dragging.current = true
+    onShelfDragChange?.(true)
+    gl.domElement.style.cursor = 'grabbing'
+  }
+
+  useEffect(() => {
+    if (!arrange) return undefined
+    const onMove = (event) => {
+      if (!dragging.current) return
+      const rect = gl.domElement.getBoundingClientRect()
+      const nx = ((event.clientX - rect.left) / Math.max(1, rect.width)) * 2 - 1
+      const ny = -((event.clientY - rect.top) / Math.max(1, rect.height)) * 2 + 1
+      raycaster.setFromCamera(new THREE.Vector2(nx, ny), camera)
+      if (!raycaster.ray.intersectPlane(floorPlane, arrangeHit)) return
+      onMoveShelf?.(shelf.id, {
+        x: arrangeHit.x + dragOffset.current.x,
+        z: arrangeHit.z + dragOffset.current.z,
+      })
+    }
+    const onUp = () => {
+      if (!dragging.current) return
+      dragging.current = false
+      onShelfDragChange?.(false)
+      gl.domElement.style.cursor = 'auto'
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
+    window.addEventListener('blur', onUp)
+    return () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+      window.removeEventListener('blur', onUp)
+      if (dragging.current) {
+        dragging.current = false
+        onShelfDragChange?.(false)
+        gl.domElement.style.cursor = 'auto'
+      }
+    }
+  }, [arrange, camera, gl, onMoveShelf, onShelfDragChange, shelf.id])
 
   return (
-    <group position={[0, -1.5, 0]}>
-      {/* Back panel */}
-      <mesh position={[0, 2, -0.75]} receiveShadow>
-        <boxGeometry args={[7.6, 7.6, 0.15]} />
-        <meshStandardMaterial map={woodTex2} roughness={0.6} />
-      </mesh>
-      {/* Left side */}
-      <mesh position={[-3.85, 2, 0]} castShadow receiveShadow>
-        <boxGeometry args={[0.3, 7.6, 1.5]} />
-        <meshStandardMaterial map={woodTex} roughness={0.45} />
-      </mesh>
-      {/* Right side */}
-      <mesh position={[3.85, 2, 0]} castShadow receiveShadow>
-        <boxGeometry args={[0.3, 7.6, 1.5]} />
-        <meshStandardMaterial map={woodTex} roughness={0.45} />
-      </mesh>
-      {/* Top */}
-      <mesh position={[0, 5.85, 0]} castShadow receiveShadow>
-        <boxGeometry args={[8.1, 0.3, 1.6]} />
-        <meshStandardMaterial map={woodTex} roughness={0.45} />
-      </mesh>
-      {/* Bottom */}
-      <mesh position={[0, -1.85, 0]} castShadow receiveShadow>
-        <boxGeometry args={[8.1, 0.3, 1.6]} />
-        <meshStandardMaterial map={woodTex} roughness={0.45} />
-      </mesh>
-      {/* Shelves with books */}
-      {[-1.6, 0.4, 2.4, 4.4].map((y, shelfIndex) => (
-        <Shelf
-          key={y}
-          y={y}
-          woodTex={woodTex}
+    <group position={[shelf.x, 0, shelf.z]} rotation={[0, shelf.yaw || 0, 0]}>
+      <group position={[0, 0, 0]}>
+        {selected && arrange && (
+          <mesh position={[0, 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+            <ringGeometry args={[halfW + 0.4, halfW + 0.65, 48]} />
+            <meshBasicMaterial color="#a983ff" transparent opacity={0.85} />
+          </mesh>
+        )}
+
+        <group
+          onPointerDown={onPointerDownCase}
+          onClick={(event) => {
+            if (!arrange) return
+            event.stopPropagation()
+            onSelectShelf?.(shelf.id)
+          }}
+          onPointerOver={(event) => {
+            if (!arrange || dragging.current) return
+            event.stopPropagation()
+            gl.domElement.style.cursor = 'grab'
+          }}
+          onPointerOut={() => {
+            if (arrange && !dragging.current) gl.domElement.style.cursor = 'auto'
+          }}
+        >
+          <mesh position={[0, midY, -0.75]} receiveShadow>
+            <boxGeometry args={[width, frameH, 0.15]} />
+            <meshStandardMaterial
+              map={woodTex2}
+              roughness={0.6}
+              color={selected && arrange ? '#c4a574' : '#ffffff'}
+            />
+          </mesh>
+          <mesh position={[-sideX, midY, 0]} castShadow receiveShadow>
+            <boxGeometry args={[0.3, frameH, 1.5]} />
+            <meshStandardMaterial map={woodTex} roughness={0.45} />
+          </mesh>
+          <mesh position={[sideX, midY, 0]} castShadow receiveShadow>
+            <boxGeometry args={[0.3, frameH, 1.5]} />
+            <meshStandardMaterial map={woodTex} roughness={0.45} />
+          </mesh>
+          <mesh position={[0, topY, 0]} castShadow receiveShadow>
+            <boxGeometry args={[width + 0.5, 0.3, 1.6]} />
+            <meshStandardMaterial map={woodTex} roughness={0.45} />
+          </mesh>
+          <mesh position={[0, bottomY, 0]} castShadow receiveShadow>
+            <boxGeometry args={[width + 0.5, 0.3, 1.6]} />
+            <meshStandardMaterial map={woodTex} roughness={0.45} />
+          </mesh>
+        </group>
+
+        {rowYs.map((y, shelfIndex) => (
+          <ShelfRow
+            key={`${shelf.id}-row-${shelfIndex}`}
+            y={y}
+            woodTex={woodTex}
+            mode={mode}
+            books={rowLayouts[shelfIndex] || []}
+            width={width}
+            selectedBookId={selectedBookId}
+            onSelectBook={onSelectBook}
+            interactiveBooks={interactiveBooks}
+          />
+        ))}
+
+        {mode === 'play' && (
+          <>
+            <CuboidCollider position={[0, midY, -0.75]} args={[halfW, frameH / 2, 0.08]} />
+            <CuboidCollider position={[-sideX, midY, 0]} args={[0.15, frameH / 2, 0.75]} />
+            <CuboidCollider position={[sideX, midY, 0]} args={[0.15, frameH / 2, 0.75]} />
+            <CuboidCollider position={[0, topY, 0]} args={[halfW + 0.25, 0.15, 0.8]} />
+            <CuboidCollider position={[0, bottomY, 0]} args={[halfW + 0.25, 0.15, 0.8]} />
+          </>
+        )}
+      </group>
+    </group>
+  )
+}
+
+function Bookshelf({
+  mode,
+  library,
+  shelves,
+  selectedBookId,
+  onSelectBook,
+  selectedShelfId,
+  onSelectShelf,
+  onMoveShelf,
+  onShelfDragChange,
+}) {
+  const cases = Array.isArray(shelves) ? shelves : []
+  const books = Array.isArray(library) ? library : []
+
+  return (
+    <group>
+      {cases.map((shelf) => (
+        <BookshelfCase
+          key={shelf.id}
+          shelf={shelf}
+          books={books.filter((book) => book.shelfId === shelf.id)}
           mode={mode}
-          library={library}
-          shelfIndex={shelfIndex}
           selectedBookId={selectedBookId}
           onSelectBook={onSelectBook}
+          selectedShelfId={selectedShelfId}
+          onSelectShelf={onSelectShelf}
+          onMoveShelf={onMoveShelf}
+          onShelfDragChange={onShelfDragChange}
         />
       ))}
 
-      {/* Physics colliders for frame + floor */}
       {mode === 'play' && (
-        <>
-          <CuboidCollider position={[0, 2, -0.75]} args={[3.8, 3.8, 0.08]} />
-          <CuboidCollider position={[-3.85, 2, 0]} args={[0.15, 3.8, 0.75]} />
-          <CuboidCollider position={[3.85, 2, 0]} args={[0.15, 3.8, 0.75]} />
-          <CuboidCollider position={[0, 5.85, 0]} args={[4.05, 0.15, 0.8]} />
-          <CuboidCollider position={[0, -1.85, 0]} args={[4.05, 0.15, 0.8]} />
-          {/* Floor to catch fallen books */}
-          <CuboidCollider position={[0, -5.5, 0]} args={[30, 0.5, 30]} />
-        </>
+        <CuboidCollider position={[0, -1.2, 0]} args={[80, 0.5, 80]} />
       )}
+
+      {/* Floor disc for grounding the room */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.5, 0]} receiveShadow>
+        <circleGeometry args={[48, 64]} />
+        <meshStandardMaterial color="#12081f" roughness={0.95} metalness={0.05} />
+      </mesh>
     </group>
   )
 }

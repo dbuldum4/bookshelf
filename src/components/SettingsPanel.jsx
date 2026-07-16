@@ -109,6 +109,7 @@ function SettingsPanel({
     if (!open) return undefined
 
     const dialog = dialogRef.current
+    const trigger = triggerRef.current
     const previouslyFocused =
       document.activeElement instanceof HTMLElement ? document.activeElement : null
 
@@ -160,8 +161,8 @@ function SettingsPanel({
       window.removeEventListener('pointerdown', onPointerDown)
       window.removeEventListener('keydown', onKeyDown, true)
       // Restore focus to the Settings trigger (or previous focus) on close.
-      if (triggerRef.current) {
-        triggerRef.current.focus()
+      if (trigger) {
+        trigger.focus()
       } else if (previouslyFocused && document.contains(previouslyFocused)) {
         previouslyFocused.focus()
       }

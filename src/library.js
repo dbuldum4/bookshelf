@@ -1,7 +1,25 @@
-const STORAGE_KEY = 'bookshelf-library-v2'
-const LEGACY_STORAGE_KEY = 'bookshelf-library-v1'
+const STORAGE_KEY = 'bookshelf-library-v3'
+const LEGACY_STORAGE_KEY_V2 = 'bookshelf-library-v2'
+const LEGACY_STORAGE_KEY_V1 = 'bookshelf-library-v1'
 
 export const READING_STATUSES = ['Want to Read', 'Reading', 'Finished']
+
+/** Default named case every library starts with (and migrations land on). */
+export const DEFAULT_SHELF_ID = 'library'
+export const DEFAULT_SHELF_NAME = 'Library'
+
+/** Physical shelf bounds (world units / integer rows). */
+export const SHELF_WIDTH_MIN = 3.2
+export const SHELF_WIDTH_MAX = 12
+export const SHELF_ROWS_MIN = 1
+export const SHELF_ROWS_MAX = 6
+export const DEFAULT_SHELF_WIDTH = 7.6
+export const DEFAULT_SHELF_ROWS = 4
+
+export const SHELF_SIDE_THICKNESS = 0.3
+export const SHELF_ROW_SPACING = 2.0
+export const SHELF_BOOK_GAP = 0.018
+export const SHELF_INNER_MARGIN = 0.35
 
 const BOOKS = [
   ['the-great-gatsby', 'The Great Gatsby', 'F. Scott Fitzgerald'],
@@ -95,9 +113,76 @@ function normalizeQuotes(value) {
     .filter(Boolean)
 }
 
-function normalizeBook(value, index) {
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value))
+}
+
+function makeShelfId(name, index = 0) {
+  const slug = String(name || 'shelf')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '') || 'shelf'
+  const unique = globalThis.crypto?.randomUUID?.().slice(0, 8)
+    || `${Date.now().toString(36)}-${index}`
+  return `${slug}-${unique}`
+}
+
+export function normalizeShelf(value, index = 0) {
+  const shelf = value && typeof value === 'object' ? value : {}
+  const width = Number(shelf.width)
+  const rows = Number(shelf.rows)
+  const x = Number(shelf.x)
+  const z = Number(shelf.z)
+  const yaw = Number(shelf.yaw)
+  return {
+    id: typeof shelf.id === 'string' && shelf.id ? shelf.id : makeShelfId(shelf.name, index),
+    name: typeof shelf.name === 'string' && shelf.name.trim() ? shelf.name.trim() : `Shelf ${index + 1}`,
+    x: Number.isFinite(x) ? x : index * 9,
+    z: Number.isFinite(z) ? z : 0,
+    yaw: Number.isFinite(yaw) ? yaw : 0,
+    width: Number.isFinite(width)
+      ? clamp(width, SHELF_WIDTH_MIN, SHELF_WIDTH_MAX)
+      : DEFAULT_SHELF_WIDTH,
+    rows: Number.isFinite(rows)
+      ? clamp(Math.round(rows), SHELF_ROWS_MIN, SHELF_ROWS_MAX)
+      : DEFAULT_SHELF_ROWS,
+  }
+}
+
+export function createDefaultShelf(overrides = {}) {
+  return normalizeShelf({
+    id: DEFAULT_SHELF_ID,
+    name: DEFAULT_SHELF_NAME,
+    x: 0,
+    z: 0,
+    yaw: 0,
+    width: DEFAULT_SHELF_WIDTH,
+    rows: DEFAULT_SHELF_ROWS,
+    ...overrides,
+  })
+}
+
+export function createShelf(draft = {}, index = 0) {
+  return normalizeShelf({
+    name: draft.name || `Shelf ${index + 1}`,
+    x: draft.x ?? index * 9,
+    z: draft.z ?? 0,
+    yaw: draft.yaw ?? 0,
+    width: draft.width ?? DEFAULT_SHELF_WIDTH,
+    rows: draft.rows ?? DEFAULT_SHELF_ROWS,
+    ...draft,
+    id: draft.id || makeShelfId(draft.name, index),
+  }, index)
+}
+
+function normalizeBook(value, index, defaultShelfId = DEFAULT_SHELF_ID) {
   const book = value && typeof value === 'object' ? value : {}
   const pageCount = asNumber(book.pageCount)
+  const shelfId = typeof book.shelfId === 'string' && book.shelfId
+    ? book.shelfId
+    : defaultShelfId
   return {
     id: typeof book.id === 'string' && book.id ? book.id : makeId(book.title, index),
     title: typeof book.title === 'string' && book.title.trim() ? book.title.trim() : 'Untitled book',
@@ -115,6 +200,7 @@ function normalizeBook(value, index) {
     isbn: typeof book.isbn === 'string' ? book.isbn : '',
     coverUrl: typeof book.coverUrl === 'string' ? book.coverUrl : '',
     createdAt: typeof book.createdAt === 'string' ? book.createdAt : new Date().toISOString(),
+    shelfId,
   }
 }
 
@@ -125,60 +211,217 @@ export function createLibrary() {
     author,
     color: COLORS[index % COLORS.length],
     status: defaultStatus(index),
+    shelfId: DEFAULT_SHELF_ID,
   }, index))
 }
 
-export function createBook(draft, index) {
+/** Full app state: books + named shelves in a shared room. */
+export function createLibraryState() {
+  return {
+    books: createLibrary(),
+    shelves: [createDefaultShelf()],
+  }
+}
+
+export function createBook(draft, index, defaultShelfId = DEFAULT_SHELF_ID) {
   return normalizeBook({
     ...draft,
     id: makeId(draft.title, index),
     color: COLORS[index % COLORS.length],
     status: draft.status || 'Want to Read',
-  }, index)
+    shelfId: draft.shelfId || defaultShelfId,
+  }, index, defaultShelfId)
 }
 
-function readStoredLibrary(key) {
+/**
+ * Ensure every book points at a known shelf, shelves are normalized,
+ * and at least one shelf exists. Returns a new state object.
+ */
+export function normalizeLibraryState(state) {
+  const rawShelves = Array.isArray(state?.shelves) ? state.shelves : []
+  const usedShelfIds = new Set()
+  let shelves = rawShelves.map((shelf, index) => {
+    const normalized = normalizeShelf(shelf, index)
+    let id = normalized.id
+    let suffix = 2
+    while (usedShelfIds.has(id)) {
+      id = `${normalized.id}-${suffix}`
+      suffix += 1
+    }
+    usedShelfIds.add(id)
+    return id === normalized.id ? normalized : { ...normalized, id }
+  })
+  if (!shelves.length) shelves = [createDefaultShelf()]
+
+  const shelfIds = new Set(shelves.map((shelf) => shelf.id))
+  const fallbackId = shelves[0].id
+  const rawBooks = Array.isArray(state?.books) ? state.books : Array.isArray(state) ? state : []
+  const books = rawBooks.map((book, index) => {
+    const normalized = normalizeBook(book, index, fallbackId)
+    if (!shelfIds.has(normalized.shelfId)) normalized.shelfId = fallbackId
+    return normalized
+  })
+
+  return { books, shelves }
+}
+
+/**
+ * Grow shelves (width/rows up to max) and/or spawn extra cases so every book
+ * packs onto a visible plank. Used on load and import so overflow never
+ * silently disappears from the 3D scene.
+ *
+ * @returns {{ books: object[], shelves: object[], adjusted: boolean, message?: string }}
+ */
+export function ensureLibraryCapacity(state) {
+  const base = normalizeLibraryState(state)
+  let books = base.books.map((book) => ({ ...book }))
+  let shelves = base.shelves.map((shelf) => ({ ...shelf }))
+  let adjusted = false
+  let spilled = false
+
+  // Snapshot of shelf ids to iterate; we may append new cases while looping.
+  const shelfIds = shelves.map((shelf) => shelf.id)
+  for (const shelfId of shelfIds) {
+    const shelfIndex = shelves.findIndex((shelf) => shelf.id === shelfId)
+    if (shelfIndex < 0) continue
+
+    let shelf = shelves[shelfIndex]
+    let members = booksOnShelf(books, shelf.id)
+    if (booksFitOnShelf(members, shelf)) continue
+
+    // Prefer growing the existing case before inventing new ones.
+    let next = normalizeShelf({ ...shelf, width: SHELF_WIDTH_MAX })
+    if (booksFitOnShelf(members, next)) {
+      shelves[shelfIndex] = next
+      adjusted = true
+      continue
+    }
+    next = normalizeShelf({ ...shelf, width: SHELF_WIDTH_MAX, rows: SHELF_ROWS_MAX })
+    shelves[shelfIndex] = next
+    shelf = next
+    adjusted = true
+    if (booksFitOnShelf(members, shelf)) continue
+
+    // Still over capacity: keep what fits on the maxed case, spill the rest.
+    const packed = packBooksIntoRows(members, shelf)
+    let overflow = packed.slice(shelf.rows).flat()
+    if (!overflow.length) continue
+    spilled = true
+
+    while (overflow.length) {
+      const overflowShelf = createShelf({
+        name: `Shelf ${shelves.length + 1}`,
+        x: shelves[shelves.length - 1].x + shelves[shelves.length - 1].width + 2.5,
+        z: shelves[shelves.length - 1].z,
+        yaw: 0,
+        width: SHELF_WIDTH_MAX,
+        rows: SHELF_ROWS_MAX,
+      }, shelves.length)
+      shelves = [...shelves, overflowShelf]
+
+      const overflowPacked = packBooksIntoRows(overflow, overflowShelf)
+      const batch = overflowPacked.slice(0, overflowShelf.rows).flat()
+      // Safety: a single book always fits a max case; never stall the loop.
+      const take = batch.length > 0 ? batch : overflow.slice(0, 1)
+      const takeIds = new Set(take.map((book) => book.id))
+      books = books.map((book) => (
+        takeIds.has(book.id) ? { ...book, shelfId: overflowShelf.id } : book
+      ))
+      overflow = overflow.filter((book) => !takeIds.has(book.id))
+    }
+  }
+
+  const message = spilled
+    ? 'Some books needed extra shelves so everything stays visible. Check Arrange mode to place the new cases.'
+    : adjusted
+      ? 'Some shelves were resized so every book stays visible.'
+      : undefined
+
+  return { books, shelves, adjusted: adjusted || spilled, message }
+}
+
+function readStoredJson(key) {
   try {
-    const value = JSON.parse(window.localStorage.getItem(key))
-    return Array.isArray(value) ? value : null
+    return JSON.parse(window.localStorage.getItem(key))
   } catch {
     return null
   }
 }
 
-export function loadLibrary() {
-  const fallback = createLibrary()
+function booksFromLegacyArray(rawBooks) {
+  const books = (Array.isArray(rawBooks) ? rawBooks : []).map((book, index) =>
+    normalizeBook(book, index, DEFAULT_SHELF_ID)
+  )
+  return normalizeLibraryState({ books, shelves: [createDefaultShelf()] })
+}
+
+function finalizeLoadedState(state) {
+  const { books, shelves } = ensureLibraryCapacity(state)
+  return { books, shelves }
+}
+
+export function loadLibraryState() {
+  const fallback = createLibraryState()
   if (typeof window === 'undefined') return fallback
 
-  const saved = readStoredLibrary(STORAGE_KEY)
-  if (saved) return saved.map(normalizeBook)
+  const saved = readStoredJson(STORAGE_KEY)
+  if (saved && typeof saved === 'object' && !Array.isArray(saved) && Array.isArray(saved.books)) {
+    return finalizeLoadedState(saved)
+  }
+  // v3 accidentally saved as bare books array
+  if (Array.isArray(saved)) return finalizeLoadedState(booksFromLegacyArray(saved))
 
-  const legacy = readStoredLibrary(LEGACY_STORAGE_KEY)
-  if (!legacy) return fallback
+  const v2 = readStoredJson(LEGACY_STORAGE_KEY_V2)
+  if (Array.isArray(v2)) return finalizeLoadedState(booksFromLegacyArray(v2))
+  if (v2 && typeof v2 === 'object' && Array.isArray(v2.books)) {
+    return finalizeLoadedState(v2)
+  }
+
+  const v1 = readStoredJson(LEGACY_STORAGE_KEY_V1)
+  if (!Array.isArray(v1)) return fallback
 
   const legacyById = new Map(
-    legacy
+    v1
       .filter((book) => book && typeof book === 'object' && typeof book.id === 'string')
       .map((book) => [book.id, book])
   )
-  return fallback.map((book, index) => normalizeBook({
+  const books = fallback.books.map((book, index) => normalizeBook({
     ...book,
     ...legacyById.get(book.id),
+    shelfId: DEFAULT_SHELF_ID,
   }, index))
+  return finalizeLoadedState({ books, shelves: [createDefaultShelf()] })
 }
 
-export function saveLibrary(library) {
+/** @deprecated Prefer loadLibraryState — returns books only for older callers. */
+export function loadLibrary() {
+  return loadLibraryState().books
+}
+
+export function saveLibraryState(state) {
   if (typeof window === 'undefined') return false
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(library))
+    const normalized = normalizeLibraryState(state)
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized))
     return true
   } catch {
     return false
   }
 }
 
+/** @deprecated Prefer saveLibraryState. Accepts a books array or full state. */
+export function saveLibrary(libraryOrState) {
+  if (Array.isArray(libraryOrState)) {
+    return saveLibraryState({
+      books: libraryOrState,
+      shelves: [createDefaultShelf()],
+    })
+  }
+  return saveLibraryState(libraryOrState)
+}
+
 export const LIBRARY_EXPORT_FORMAT = 'bookshelf-library'
-export const LIBRARY_EXPORT_VERSION = 1
+export const LIBRARY_EXPORT_VERSION = 2
 
 const BOOK_EXPORT_FIELDS = [
   'id',
@@ -197,7 +440,10 @@ const BOOK_EXPORT_FIELDS = [
   'isbn',
   'coverUrl',
   'createdAt',
+  'shelfId',
 ]
+
+const SHELF_EXPORT_FIELDS = ['id', 'name', 'x', 'z', 'yaw', 'width', 'rows']
 
 function pickBookFields(book) {
   const next = {}
@@ -205,27 +451,41 @@ function pickBookFields(book) {
   return next
 }
 
-/** Build a portable, versioned snapshot of the full library. */
-export function buildLibraryExport(library) {
-  const books = (Array.isArray(library) ? library : []).map((book, index) =>
-    pickBookFields(normalizeBook(book, index))
-  )
+function pickShelfFields(shelf) {
+  const next = {}
+  for (const field of SHELF_EXPORT_FIELDS) next[field] = shelf[field]
+  return next
+}
+
+/** Build a portable, versioned snapshot of the full library (books + shelves). */
+export function buildLibraryExport(libraryOrState) {
+  const state = Array.isArray(libraryOrState)
+    ? normalizeLibraryState({ books: libraryOrState, shelves: [createDefaultShelf()] })
+    : normalizeLibraryState(libraryOrState)
   return {
     format: LIBRARY_EXPORT_FORMAT,
     version: LIBRARY_EXPORT_VERSION,
     exportedAt: new Date().toISOString(),
-    books,
+    books: state.books.map((book, index) => pickBookFields(normalizeBook(book, index))),
+    shelves: state.shelves.map((shelf, index) => pickShelfFields(normalizeShelf(shelf, index))),
   }
 }
 
-export function libraryToJson(library) {
-  return `${JSON.stringify(buildLibraryExport(library), null, 2)}\n`
+export function libraryToJson(libraryOrState) {
+  return `${JSON.stringify(buildLibraryExport(libraryOrState), null, 2)}\n`
 }
 
-function extractImportedBooks(data) {
-  if (Array.isArray(data)) return data
+function extractImportedState(data) {
+  if (Array.isArray(data)) {
+    return {
+      books: data,
+      shelves: null,
+      format: null,
+      version: null,
+    }
+  }
 
-  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+  if (!data || typeof data !== 'object') {
     throw new Error('Library JSON must be an array of books or an object with a books array.')
   }
 
@@ -240,16 +500,24 @@ function extractImportedBooks(data) {
     }
   }
 
-  if (Array.isArray(data.books)) return data.books
-  if (Array.isArray(data.library)) return data.library
+  const books = Array.isArray(data.books)
+    ? data.books
+    : Array.isArray(data.library)
+      ? data.library
+      : null
+  if (!books) throw new Error('Library JSON must include a books array.')
 
-  throw new Error('Library JSON must include a books array.')
+  return {
+    books,
+    shelves: Array.isArray(data.shelves) ? data.shelves : null,
+    format: data.format || null,
+    version: data.version ?? null,
+  }
 }
 
 /**
  * Parse and validate a library JSON string.
- * Accepts the versioned export shape or a bare books array.
- * Returns normalized books that round-trip every library field.
+ * Accepts versioned export (v1 books-only or v2 books+shelves) or a bare books array.
  */
 export function parseLibraryImport(text) {
   if (typeof text !== 'string' || !text.trim()) {
@@ -263,18 +531,29 @@ export function parseLibraryImport(text) {
     throw new Error('That file is not valid JSON.')
   }
 
-  const rawBooks = extractImportedBooks(data)
-  if (!rawBooks.length) {
+  const extracted = extractImportedState(data)
+  if (!extracted.books.length) {
     throw new Error('That library file does not contain any books.')
   }
 
+  const shelves = (extracted.shelves && extracted.shelves.length
+    ? extracted.shelves
+    : [createDefaultShelf()]
+  ).map((shelf, index) => normalizeShelf(shelf, index))
+
+  const shelfIds = new Set(shelves.map((shelf) => shelf.id))
+  if (shelfIds.size !== shelves.length) {
+    throw new Error('That library file contains duplicate shelf IDs.')
+  }
+  const fallbackId = shelves[0].id
   const seenIds = new Set()
-  const books = rawBooks.map((entry, index) => {
+  const books = extracted.books.map((entry, index) => {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
       throw new Error(`Book at position ${index + 1} is not a valid object.`)
     }
 
-    const book = pickBookFields(normalizeBook(entry, index))
+    const book = pickBookFields(normalizeBook(entry, index, fallbackId))
+    if (!shelfIds.has(book.shelfId)) book.shelfId = fallbackId
     if (seenIds.has(book.id)) {
       book.id = makeId(book.title, index)
     }
@@ -282,21 +561,23 @@ export function parseLibraryImport(text) {
     return book
   })
 
+  const state = normalizeLibraryState({ books, shelves })
   return {
-    books,
-    count: books.length,
-    format: data && typeof data === 'object' && !Array.isArray(data) ? data.format || null : null,
-    version: data && typeof data === 'object' && !Array.isArray(data) ? data.version ?? null : null,
+    books: state.books,
+    shelves: state.shelves,
+    count: state.books.length,
+    format: extracted.format,
+    version: extracted.version,
   }
 }
 
 /** Trigger a browser download of the library as JSON. */
-export function downloadLibraryExport(library, filename) {
+export function downloadLibraryExport(libraryOrState, filename) {
   if (typeof window === 'undefined' || typeof document === 'undefined') {
     throw new Error('Export is only available in the browser.')
   }
 
-  const json = libraryToJson(library)
+  const json = libraryToJson(libraryOrState)
   const stamp = new Date().toISOString().slice(0, 10)
   const name = filename || `bookshelf-library-${stamp}.json`
   const blob = new Blob([json], { type: 'application/json' })
@@ -309,7 +590,12 @@ export function downloadLibraryExport(library, filename) {
   anchor.click()
   anchor.remove()
   window.setTimeout(() => URL.revokeObjectURL(url), 0)
-  return { filename: name, count: Array.isArray(library) ? library.length : 0 }
+  const count = Array.isArray(libraryOrState)
+    ? libraryOrState.length
+    : Array.isArray(libraryOrState?.books)
+      ? libraryOrState.books.length
+      : 0
+  return { filename: name, count }
 }
 
 /** Parse a single CSV line with RFC 4180-style quoting. */
@@ -511,7 +797,7 @@ export function parseLibraryCsv(text) {
       currentPage: status === 'Finished' && pageCount ? pageCount : 0,
     }
 
-    const book = pickBookFields(normalizeBook(draft, index - 1))
+    const book = pickBookFields(normalizeBook({ ...draft, shelfId: DEFAULT_SHELF_ID }, index - 1))
     if (seenIds.has(book.id)) book.id = makeId(book.title, index)
     seenIds.add(book.id)
     books.push(book)
@@ -521,8 +807,10 @@ export function parseLibraryCsv(text) {
     throw new Error('That CSV file does not contain any books.')
   }
 
+  const shelves = [createDefaultShelf()]
   return {
     books,
+    shelves,
     count: books.length,
     format: 'csv',
     version: null,
@@ -753,29 +1041,280 @@ export function computeLibraryStats(library, now = new Date()) {
   }
 }
 
-export function buildShelfBooks(library, shelfIndex) {
-  const start = shelfIndex * 10
-  const shelfBooks = library.slice(start, start + 10)
+/** Usable inner width for packing spines onto a case. */
+export function shelfInnerWidth(shelf) {
+  const width = Number(shelf?.width)
+  const bay = Number.isFinite(width) ? width : DEFAULT_SHELF_WIDTH
+  return Math.max(0.4, bay - SHELF_SIDE_THICKNESS * 2 - SHELF_INNER_MARGIN)
+}
+
+function bookSalt(book, fallbackIndex = 0) {
+  if (typeof book?.id === 'string' && book.id) {
+    let hash = 0
+    for (let i = 0; i < book.id.length; i += 1) {
+      hash = (hash * 31 + book.id.charCodeAt(i)) >>> 0
+    }
+    return hash
+  }
+  return fallbackIndex
+}
+
+/** Deterministic spine width for capacity and layout. */
+export function bookSpineWidth(book, fallbackIndex = 0) {
+  return 0.54 + bookRandom(bookSalt(book, fallbackIndex), 1) * 0.18
+}
+
+/**
+ * Pack books left-to-right, top-to-bottom into rows using natural spine widths.
+ * Returns an array of rows (each row is an array of books in order).
+ */
+export function packBooksIntoRows(books, shelf) {
+  const list = Array.isArray(books) ? books : []
+  const inner = shelfInnerWidth(shelf)
+  const rows = []
+  let current = []
+  let used = 0
+
+  list.forEach((book, index) => {
+    const width = bookSpineWidth(book, index)
+    const needed = current.length === 0 ? width : width + SHELF_BOOK_GAP
+    if (current.length > 0 && used + needed > inner + 1e-6) {
+      rows.push(current)
+      current = [book]
+      used = width
+    } else {
+      current.push(book)
+      used += needed
+    }
+  })
+  if (current.length) rows.push(current)
+  return rows
+}
+
+/** True when every book fits on the shelf without exceeding its row count. */
+export function booksFitOnShelf(books, shelf) {
+  const rows = Math.max(SHELF_ROWS_MIN, Math.min(SHELF_ROWS_MAX, Math.round(Number(shelf?.rows) || DEFAULT_SHELF_ROWS)))
+  return packBooksIntoRows(books, shelf).length <= rows
+}
+
+/** Books assigned to a shelf, preserving library order. */
+export function booksOnShelf(library, shelfId) {
+  return (Array.isArray(library) ? library : []).filter((book) => book.shelfId === shelfId)
+}
+
+/**
+ * Layout books for one physical row plank (centered, non-overlapping).
+ * `library` is the row's books only; `rowSalt` keeps geometry stable across rows.
+ */
+export function buildShelfBooks(library, rowSalt = 0, shelf = null) {
+  const shelfBooks = Array.isArray(library) ? library : []
   const geometry = shelfBooks.map((book, index) => {
-    const globalIndex = start + index
+    const salt = bookSalt(book, rowSalt * 100 + index)
     return {
       ...book,
-      width: 0.54 + bookRandom(globalIndex, 1) * 0.18,
-      height: 1.02 + bookRandom(globalIndex, 2) * 0.28,
-      depth: 0.52 + bookRandom(globalIndex, 3) * 0.16,
-      tilt: bookRandom(globalIndex, 4) > 0.84
-        ? (bookRandom(globalIndex, 5) - 0.5) * 0.16
+      width: 0.54 + bookRandom(salt, 1) * 0.18,
+      height: 1.02 + bookRandom(salt, 2) * 0.28,
+      depth: 0.52 + bookRandom(salt, 3) * 0.16,
+      tilt: bookRandom(salt, 4) > 0.84
+        ? (bookRandom(salt, 5) - 0.5) * 0.16
         : 0,
     }
   })
-  const gap = 0.018
-  const totalWidth = geometry.reduce((sum, book) => sum + book.width, 0)
-    + Math.max(0, geometry.length - 1) * gap
-  let x = -totalWidth / 2
 
+  const gap = SHELF_BOOK_GAP
+  let totalWidth = geometry.reduce((sum, book) => sum + book.width, 0)
+    + Math.max(0, geometry.length - 1) * gap
+  const inner = shelf ? shelfInnerWidth(shelf) : totalWidth
+  const scale = totalWidth > inner && totalWidth > 0 ? inner / totalWidth : 1
+  if (scale < 1) {
+    for (const book of geometry) book.width *= scale
+    totalWidth *= scale
+  }
+
+  let x = -totalWidth / 2
   return geometry.map((book) => {
     const position = [x + book.width / 2, book.height / 2, 0]
-    x += book.width + gap
+    x += book.width + gap * scale
     return { ...book, position }
   })
+}
+
+/**
+ * Full case layout: array of rows (length === shelf.rows), each an array of
+ * positioned books for that plank. Empty trailing rows are [].
+ * Callers should run ensureLibraryCapacity on load/import so packed rows never
+ * exceed shelf.rows; overflow rows are still omitted here (no invisible planks).
+ */
+export function buildShelfCaseLayout(books, shelf) {
+  const normalized = normalizeShelf(shelf)
+  const packed = packBooksIntoRows(books, normalized)
+  const rows = []
+  for (let rowIndex = 0; rowIndex < normalized.rows; rowIndex += 1) {
+    const rowBooks = packed[rowIndex] || []
+    rows.push(buildShelfBooks(rowBooks, rowIndex, normalized))
+  }
+  return rows
+}
+
+/**
+ * World-space focus point for camera aim when a book is selected.
+ * Uses packed layout so tall/wide cases aim at the book's actual plank.
+ */
+export function bookWorldFocusPosition(book, library, shelves, standOff = 3.2) {
+  const list = Array.isArray(shelves) ? shelves : []
+  const shelf = list.find((entry) => entry.id === book?.shelfId) || list[0]
+  if (!shelf || !book) {
+    return { x: 0, y: 1.5, z: 0, cameraX: 0, cameraZ: 4, id: book?.id }
+  }
+
+  const members = booksOnShelf(library, shelf.id)
+  const layout = buildShelfCaseLayout(members, shelf)
+  const rowYs = shelfRowYs(shelf.rows)
+  let localX = 0
+  let localY = (rowYs[Math.floor(rowYs.length / 2)] || shelfFrameHeight(shelf.rows) * 0.4) + 0.5
+  let localZ = 0
+
+  for (let rowIndex = 0; rowIndex < layout.length; rowIndex += 1) {
+    const entry = layout[rowIndex].find((item) => item.id === book.id)
+    if (!entry) continue
+    localX = entry.position[0]
+    localY = (rowYs[rowIndex] || 0) + entry.position[1]
+    localZ = entry.position[2] || 0
+    break
+  }
+
+  const yaw = shelf.yaw || 0
+  const cos = Math.cos(yaw)
+  const sin = Math.sin(yaw)
+  // Case group: position (shelf.x, 0, shelf.z), rotation Y = yaw.
+  const bookX = shelf.x + localX * cos + localZ * sin
+  const bookZ = shelf.z - localX * sin + localZ * cos
+  // Aim at the book itself and place the camera in front of the case
+  // (+Z local after yaw). Keeping these coordinates separate prevents an
+  // off-axis camera from looking beside rotated cases.
+  return {
+    x: bookX,
+    y: localY,
+    z: bookZ,
+    cameraX: bookX + sin * standOff,
+    cameraZ: bookZ + cos * standOff,
+    id: book.id,
+  }
+}
+
+/** Local Y positions for plank centers inside a case group (origin at base). */
+export function shelfRowYs(rows) {
+  const count = clamp(Math.round(rows) || DEFAULT_SHELF_ROWS, SHELF_ROWS_MIN, SHELF_ROWS_MAX)
+  const ys = []
+  for (let i = 0; i < count; i += 1) {
+    ys.push(0.25 + i * SHELF_ROW_SPACING)
+  }
+  return ys
+}
+
+export function shelfFrameHeight(rows) {
+  const count = clamp(Math.round(rows) || DEFAULT_SHELF_ROWS, SHELF_ROWS_MIN, SHELF_ROWS_MAX)
+  return count * SHELF_ROW_SPACING + 1.1
+}
+
+/**
+ * Try to assign a book to a shelf. Returns { ok, books } or { ok:false, reason }.
+ */
+export function assignBookToShelf(library, bookId, shelfId, shelf) {
+  const books = Array.isArray(library) ? library : []
+  const next = books.map((book) => (book.id === bookId ? { ...book, shelfId } : book))
+  const onShelf = booksOnShelf(next, shelfId)
+  if (!booksFitOnShelf(onShelf, shelf)) {
+    return { ok: false, reason: 'That shelf is full. Free space or resize it in Arrange mode.' }
+  }
+  return { ok: true, books: next }
+}
+
+/**
+ * Reorder a book within its shelf (delta -1 or +1 among shelf mates).
+ * Global array order is rewritten so shelf-relative order is preserved.
+ */
+export function reorderBookOnShelf(library, bookId, delta) {
+  const books = Array.isArray(library) ? [...library] : []
+  const book = books.find((entry) => entry.id === bookId)
+  if (!book || !delta) return books
+
+  const shelfId = book.shelfId
+  const mates = books.filter((entry) => entry.shelfId === shelfId)
+  const matePos = mates.findIndex((entry) => entry.id === bookId)
+  const targetPos = matePos + delta
+  if (matePos < 0 || targetPos < 0 || targetPos >= mates.length) return books
+
+  const reordered = [...mates]
+  const [moved] = reordered.splice(matePos, 1)
+  reordered.splice(targetPos, 0, moved)
+
+  let cursor = 0
+  return books.map((entry) => (entry.shelfId === shelfId ? reordered[cursor++] : entry))
+}
+
+/**
+ * Reorder a book only when the resulting order still fits its physical case.
+ * Packing is order-dependent, so a reorder that looks like a simple swap can
+ * otherwise create an extra row that the renderer cannot display.
+ */
+export function tryReorderBookOnShelf(library, bookId, delta, shelf) {
+  const books = reorderBookOnShelf(library, bookId, delta)
+  if (!shelf || !booksFitOnShelf(booksOnShelf(books, shelf.id), shelf)) {
+    return {
+      ok: false,
+      reason: 'That reorder would exceed the shelf capacity. Resize the case or move a book first.',
+    }
+  }
+  return { ok: true, books }
+}
+
+/**
+ * Propose a shelf transform. Rejects shrinks that would eject books.
+ * Returns { ok, shelf } or { ok:false, reason }.
+ */
+export function applyShelfTransform(shelf, books, updates) {
+  const next = normalizeShelf({ ...shelf, ...updates })
+  const members = booksOnShelf(books, shelf.id)
+  if (!booksFitOnShelf(members, next)) {
+    return {
+      ok: false,
+      reason: 'Too many books for that size. Move some books first, or make the case larger.',
+    }
+  }
+  return { ok: true, shelf: next }
+}
+
+/** Create a new empty shelf offset from existing ones. */
+export function addEmptyShelf(shelves, draft = {}) {
+  const list = Array.isArray(shelves) ? shelves : []
+  const index = list.length
+  const shelf = createShelf({
+    name: draft.name || `Shelf ${index + 1}`,
+    x: draft.x ?? (index === 0 ? 0 : list[list.length - 1].x + list[list.length - 1].width + 2.5),
+    z: draft.z ?? 0,
+    yaw: draft.yaw ?? 0,
+    width: draft.width ?? DEFAULT_SHELF_WIDTH,
+    rows: draft.rows ?? DEFAULT_SHELF_ROWS,
+    ...draft,
+  }, index)
+  return [...list, shelf]
+}
+
+/**
+ * Delete a shelf only when empty and not the last remaining case.
+ * Returns { ok, shelves } or { ok:false, reason }.
+ */
+export function deleteEmptyShelf(shelves, books, shelfId) {
+  const list = Array.isArray(shelves) ? shelves : []
+  if (list.length <= 1) {
+    return { ok: false, reason: 'Keep at least one shelf in your library.' }
+  }
+  if (booksOnShelf(books, shelfId).length > 0) {
+    return { ok: false, reason: 'Move or remove all books before deleting this shelf.' }
+  }
+  if (!list.some((shelf) => shelf.id === shelfId)) {
+    return { ok: false, reason: 'That shelf does not exist.' }
+  }
+  return { ok: true, shelves: list.filter((shelf) => shelf.id !== shelfId) }
 }
