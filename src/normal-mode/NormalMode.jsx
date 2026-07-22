@@ -94,28 +94,28 @@ function NormalMode({
   }
 
   return (
-    <div className="flex h-screen w-screen flex-col bg-background text-foreground">
+    <div className="flex h-[100dvh] w-screen flex-col bg-background text-foreground">
       <header className="flex items-center justify-between border-b bg-card px-4 py-3 shadow-sm">
         <div className="flex items-center gap-2">
           <Box className="h-6 w-6" />
           <h1 className="font-serif text-xl font-semibold tracking-tight">Bookshelf</h1>
         </div>
         <Button variant="outline" onClick={onToggle3D}>
-          <Box className="mr-2 h-4 w-4" />
-          3D view
+          <Box className="h-4 w-4 sm:mr-2" />
+          <span className="hidden sm:inline">3D view</span>
         </Button>
       </header>
 
       <Tabs value={activeTab} onValueChange={handleTabChange} className="flex flex-1 overflow-hidden">
         <div className="flex w-full flex-col">
-          <div className="border-b bg-card px-4 pt-2">
-            <TabsList className="bg-transparent p-0">
+          <div className="overflow-x-auto border-b bg-card px-4 pt-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <TabsList className="inline-flex h-auto bg-transparent p-0">
               {TABS.map((tab) => {
                 const Icon = tab.icon
                 return (
-                  <TabsTrigger key={tab.value} value={tab.value} className="gap-2 rounded-t-md border-b-2 border-transparent px-4 py-2 data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none">
+                  <TabsTrigger key={tab.value} value={tab.value} className="gap-2 rounded-t-md border-b-2 border-transparent px-3 py-2 data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none">
                     <Icon className="h-4 w-4" />
-                    {tab.label}
+                    <span className="hidden sm:inline">{tab.label}</span>
                   </TabsTrigger>
                 )
               })}
