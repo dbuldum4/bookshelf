@@ -88,7 +88,7 @@ function Controls({
   return (
     <>
       <div className="scene-controls-bar">
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 10 }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 10, pointerEvents: 'auto' }}>
           <button
             type="button"
             onClick={onNormalMode}
