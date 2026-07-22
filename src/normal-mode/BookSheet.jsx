@@ -245,7 +245,7 @@ function BookSheet({
       setLookupError('Add a title before saving the book.')
       return
     }
-    const tags = draft.tags
+    const tags = tagsDraft
       .split(',')
       .map((tag) => tag.trim())
       .filter(Boolean)

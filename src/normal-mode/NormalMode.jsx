@@ -81,6 +81,7 @@ function NormalMode({
 
   const handleAddBookSubmit = (draft) => {
     const added = onAddBook(draft)
+    if (added) onSelectBook(null)
     return added
   }
 
