@@ -4,6 +4,7 @@ import BookDetails from './components/BookDetails'
 import Controls from './components/Controls'
 import ErrorBoundary from './components/ErrorBoundary'
 import LibraryPanel from './components/LibraryPanel'
+import NormalMode from './normal-mode/NormalMode'
 import SettingsPanel from './components/SettingsPanel'
 import WebGLFallback from './components/WebGLFallback'
 import {
@@ -39,6 +40,7 @@ import {
 } from './library'
 import Scene from './scene/Scene'
 import { isWebGLAvailable } from './webgl'
+import { loadViewMode, saveViewMode } from './viewMode'
 
 const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)'
 const BOOK_NAV_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'Home', 'End'])
@@ -161,6 +163,7 @@ export default function App() {
 
   const storedMotionPreference = useRef(loadReducedMotionPreference()).current
   const [webGLAvailable, setWebGLAvailable] = useState(isWebGLAvailable)
+  const [viewMode, setViewMode] = useState(loadViewMode)
   const [mode, setMode] = useState('fixed')
   const [resetKey, setResetKey] = useState(0)
   const [galaxyMode, setGalaxyMode] = useState(loadGalaxyMode)
@@ -208,6 +211,10 @@ export default function App() {
   useEffect(() => {
     saveGalaxyMode(galaxyMode)
   }, [galaxyMode])
+
+  useEffect(() => {
+    saveViewMode(viewMode)
+  }, [viewMode])
 
   useEffect(() => {
     if (mode === 'play' && selectedBookId != null) setSelectedBookId(null)
@@ -310,7 +317,7 @@ export default function App() {
       }
 
       if (!BOOK_NAV_KEYS.has(event.key)) return
-      if (mode === 'play' || mode === 'arrange' || !library.length) return
+      if (viewMode !== '3d' || mode === 'play' || mode === 'arrange' || !library.length) return
       if (shouldIgnoreBookNavigation(event)) return
 
       if (event.key === 'ArrowLeft') {
@@ -330,7 +337,7 @@ export default function App() {
 
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [jumpBookSelection, library.length, mode, moveBookSelection, selectedBookId])
+  }, [jumpBookSelection, library.length, mode, moveBookSelection, selectedBookId, viewMode])
 
   const [selectionAnnouncement, setSelectionAnnouncement] = useState('')
   const hasAnnouncedSelection = useRef(false)
@@ -623,52 +630,84 @@ export default function App() {
     return () => window.clearTimeout(timer)
   }, [statusMessage])
 
+  const is3D = viewMode === '3d'
+
   return (
     <div
       data-reduced-motion={reducedMotion ? 'true' : 'false'}
-      style={{ width: '100vw', height: '100vh', background: '#05010f' }}
+      style={{ width: '100vw', height: '100vh', background: is3D ? '#05010f' : 'hsl(var(--background))' }}
     >
-      {webGLAvailable ? (
-        <ErrorBoundary fallback={({ reset }) => <SceneErrorFallback reset={reset} />}>
-          <Canvas
-            key={graphicsQuality}
-            shadows={graphics.shadows}
-            camera={{ position: [0, 1.95, 11], fov: 55 }}
-            dpr={graphics.dpr}
-            gl={{ antialias: graphics.antialias }}
-            onCreated={({ gl }) => {
-              const canvas = gl.domElement
-              canvas.tabIndex = 0
-              canvas.setAttribute('role', 'application')
-              canvas.setAttribute(
-                'aria-label',
-                '3D library. WASD to walk, Space to jump, drag to look around. Drag book spines to reorder them on a shelf. Arrow keys move between books. Escape clears selection. Use Arrange mode to place shelves.',
-              )
-            }}
-          >
-            <WebGLContextLossHandler onContextLost={handleWebGLContextLost} />
-            <Suspense fallback={null}>
-              <Scene
-                mode={mode}
-                resetKey={resetKey}
-                galaxyMode={galaxyMode}
-                graphics={graphics}
-                reducedMotion={reducedMotion}
-                library={library}
-                shelves={shelves}
-                selectedBookId={selectedBookId}
-                onSelectBook={selectBook}
-                selectedShelfId={selectedShelfId}
-                onSelectShelf={setSelectedShelfId}
-                onMoveShelf={moveShelf}
-                onReorderBookToIndex={handleReorderBookToIndex}
-                focusPoint={focusPoint}
-              />
-            </Suspense>
-          </Canvas>
-        </ErrorBoundary>
+      {is3D ? (
+        webGLAvailable ? (
+          <ErrorBoundary fallback={({ reset }) => <SceneErrorFallback reset={reset} />}>
+            <Canvas
+              key={graphicsQuality}
+              shadows={graphics.shadows}
+              camera={{ position: [0, 1.95, 11], fov: 55 }}
+              dpr={graphics.dpr}
+              gl={{ antialias: graphics.antialias }}
+              onCreated={({ gl }) => {
+                const canvas = gl.domElement
+                canvas.tabIndex = 0
+                canvas.setAttribute('role', 'application')
+                canvas.setAttribute(
+                  'aria-label',
+                  '3D library. WASD to walk, Space to jump, drag to look around. Drag book spines to reorder them on a shelf. Arrow keys move between books. Escape clears selection. Use Arrange mode to place shelves.',
+                )
+              }}
+            >
+              <WebGLContextLossHandler onContextLost={handleWebGLContextLost} />
+              <Suspense fallback={null}>
+                <Scene
+                  mode={mode}
+                  resetKey={resetKey}
+                  galaxyMode={galaxyMode}
+                  graphics={graphics}
+                  reducedMotion={reducedMotion}
+                  library={library}
+                  shelves={shelves}
+                  selectedBookId={selectedBookId}
+                  onSelectBook={selectBook}
+                  selectedShelfId={selectedShelfId}
+                  onSelectShelf={setSelectedShelfId}
+                  onMoveShelf={moveShelf}
+                  onReorderBookToIndex={handleReorderBookToIndex}
+                  focusPoint={focusPoint}
+                />
+              </Suspense>
+            </Canvas>
+          </ErrorBoundary>
+        ) : (
+          <WebGLFallback onRetry={retryWebGL} />
+        )
       ) : (
-        <WebGLFallback onRetry={retryWebGL} />
+        <NormalMode
+          library={library}
+          shelves={shelves}
+          selectedBookId={selectedBookId}
+          selectedShelfId={selectedShelfId}
+          onSelectBook={selectBook}
+          onSelectShelf={setSelectedShelfId}
+          onAddBook={addBook}
+          onUpdateSelectedBook={updateSelectedBook}
+          onDeleteSelectedBook={deleteSelectedBook}
+          onReplaceLibrary={replaceLibrary}
+          onMergeLibrary={mergeLibrary}
+          onRenameShelf={renameShelf}
+          onTransformShelf={transformShelf}
+          onAddShelf={handleAddShelf}
+          onDeleteShelf={handleDeleteShelf}
+          onApplyRoomPreset={handleApplyRoomPreset}
+          onExport={handleBackupExport}
+          onToggle3D={() => setViewMode('3d')}
+          onStatus={flashStatus}
+          reducedMotion={reducedMotion}
+          setReducedMotion={setReducedMotionPreference}
+          graphicsQuality={graphicsQuality}
+          setGraphicsQuality={setGraphicsQuality}
+          galaxyMode={galaxyMode}
+          setGalaxyMode={setGalaxyMode}
+        />
       )}
 
       <div className="sr-only" aria-live="polite" aria-atomic="true">
@@ -761,7 +800,7 @@ export default function App() {
         </div>
       )}
 
-      {webGLAvailable && (
+      {is3D && webGLAvailable && (
         <>
           <Controls
             mode={mode}
@@ -778,6 +817,7 @@ export default function App() {
             onDeleteShelf={handleDeleteShelf}
             onApplyRoomPreset={handleApplyRoomPreset}
             books={library}
+            onNormalMode={() => setViewMode('normal')}
           />
           <SettingsPanel
             galaxyMode={galaxyMode}
@@ -789,27 +829,31 @@ export default function App() {
           />
         </>
       )}
-      <LibraryPanel
-        library={library}
-        shelves={shelves}
-        selectedBookId={selectedBookId}
-        selectedShelfId={selectedShelfId}
-        onSelectBook={selectBook}
-        onSelectShelf={setSelectedShelfId}
-        onAddBook={addBook}
-        onReplaceLibrary={replaceLibrary}
-        onMergeLibrary={mergeLibrary}
-        onBackupExported={handleBackupExported}
-        onReorderBook={handleReorderBook}
-      />
-      <BookDetails
-        book={selectedBook}
-        shelves={shelves}
-        onUpdate={updateSelectedBook}
-        onDelete={deleteSelectedBook}
-        onClose={() => setSelectedBookId(null)}
-        onReorder={handleReorderBook}
-      />
+      {is3D && (
+        <>
+          <LibraryPanel
+            library={library}
+            shelves={shelves}
+            selectedBookId={selectedBookId}
+            selectedShelfId={selectedShelfId}
+            onSelectBook={selectBook}
+            onSelectShelf={setSelectedShelfId}
+            onAddBook={addBook}
+            onReplaceLibrary={replaceLibrary}
+            onMergeLibrary={mergeLibrary}
+            onBackupExported={handleBackupExported}
+            onReorderBook={handleReorderBook}
+          />
+          <BookDetails
+            book={selectedBook}
+            shelves={shelves}
+            onUpdate={updateSelectedBook}
+            onDelete={deleteSelectedBook}
+            onClose={() => setSelectedBookId(null)}
+            onReorder={handleReorderBook}
+          />
+        </>
+      )}
     </div>
   )
 }
