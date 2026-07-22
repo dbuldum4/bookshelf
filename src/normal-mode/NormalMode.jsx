@@ -107,7 +107,7 @@ function NormalMode({
       </header>
 
       <Tabs value={activeTab} onValueChange={handleTabChange} className="flex flex-1 overflow-hidden">
-        <div className="flex w-full flex-col">
+        <div className="flex min-h-0 w-full flex-1 flex-col">
           <div className="overflow-x-auto border-b bg-card px-4 pt-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             <TabsList className="inline-flex h-auto bg-transparent p-0">
               {TABS.map((tab) => {
