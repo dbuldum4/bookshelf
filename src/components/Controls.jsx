@@ -72,6 +72,7 @@ function Controls({
   onDeleteShelf,
   onApplyRoomPreset,
   books = [],
+  onNormalMode,
 }) {
   const [controlsOpen, setControlsOpen] = useState(false)
   const [nameDraft, setNameDraft] = useState(selectedShelf?.name || '')
@@ -87,6 +88,18 @@ function Controls({
   return (
     <>
       <div className="scene-controls-bar">
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 10 }}>
+          <button
+            type="button"
+            onClick={onNormalMode}
+            style={{
+              ...controlButtonStyle(false, reducedMotion),
+              background: 'rgba(255,255,255,0.1)',
+            }}
+          >
+            Normal mode
+          </button>
+        </div>
         <button
           type="button"
           className="scene-controls-toggle"
