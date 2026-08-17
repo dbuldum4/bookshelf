@@ -171,6 +171,7 @@ function NormalMode({
                 setGraphicsQuality={setGraphicsQuality}
                 galaxyMode={galaxyMode}
                 setGalaxyMode={setGalaxyMode}
+                library={library}
                 onRemoveDemoBooks={onRemoveDemoBooks}
                 onStatus={onStatus}
               />

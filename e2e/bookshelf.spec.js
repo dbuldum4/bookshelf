@@ -4,11 +4,9 @@ import { booksFitOnShelf, createDefaultShelf } from '../src/library'
 test.beforeEach(async ({ page }) => {
   await page.goto('/')
   const demo = page.getByRole('button', { name: 'Browse the demo library' })
-  await demo.waitFor({ state: 'visible', timeout: 15_000 }).catch(() => {})
-  if (await demo.isVisible()) {
-    await demo.click()
-    await expect(demo).toHaveCount(0)
-  }
+  await expect(demo).toBeVisible()
+  await demo.click()
+  await expect(demo).toHaveCount(0)
 })
 
 test('selects a book from the library', async ({ page }) => {

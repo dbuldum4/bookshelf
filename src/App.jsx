@@ -35,9 +35,9 @@ import {
   downloadLibraryExport,
   ensureLibraryCapacity,
   loadLibraryState,
-  markLibraryOnboarded,
   mergeLibraryStates,
   needsLibraryOnboarding,
+  persistOnboardingChoice,
   removeDemoBooks,
   saveLibraryState,
   shouldRemindLibraryBackup,
@@ -183,6 +183,8 @@ export default function App() {
   )
   const [libraryState, setLibraryState] = useState(() => initialLibraryRef.current.libraryState)
   const [onboarding, setOnboarding] = useState(() => initialLibraryRef.current.needsOnboarding)
+  const onboardingRef = useRef(onboarding)
+  onboardingRef.current = onboarding
   const [selectedBookId, setSelectedBookId] = useState(null)
   const [selectedShelfId, setSelectedShelfId] = useState(
     () => initialLibraryRef.current.selectedShelfId
@@ -466,25 +468,35 @@ export default function App() {
   }
 
   const finishOnboarding = (next) => {
-    const state = replaceLibrary(next)
-    markLibraryOnboarded()
-    saveLibraryState(state)
+    if (!onboardingRef.current) return
+    const books = Array.isArray(next?.books) ? next.books : Array.isArray(next) ? next : []
+    const nextShelves = Array.isArray(next?.shelves) && next.shelves.length
+      ? next.shelves
+      : shelves.length
+        ? shelves
+        : [{ id: DEFAULT_SHELF_ID, name: 'Library', x: 0, z: 0, yaw: 0, width: 7.6, rows: 4 }]
+    const fitted = ensureLibraryCapacity({ books, shelves: nextShelves })
+    const state = { books: fitted.books, shelves: fitted.shelves }
+    if (!persistOnboardingChoice(state)) {
+      flashStatus('Could not save library to this browser. Storage may be full or disabled.')
+      return
+    }
+    setLibraryState(state)
+    setSelectedBookId(null)
+    setSelectedShelfId(state.shelves[0]?.id || DEFAULT_SHELF_ID)
     setOnboarding(false)
+    if (fitted.message) flashStatus(fitted.message)
   }
 
   const handleRemoveDemoBooks = () => {
-    let removed = 0
-    setLibraryState((state) => {
-      const result = removeDemoBooks(state)
-      removed = result.removed
-      return { books: result.books, shelves: result.shelves }
-    })
-    flashStatus(
-      removed
-        ? `Removed ${removed} demo book${removed === 1 ? '' : 's'}.`
-        : 'No demo books to remove.',
-    )
-    return removed
+    const preview = removeDemoBooks(libraryState)
+    if (!preview.removed) {
+      flashStatus('No demo books to remove.')
+      return 0
+    }
+    setLibraryState({ books: preview.books, shelves: preview.shelves })
+    flashStatus(`Removed ${preview.removed} demo book${preview.removed === 1 ? '' : 's'}.`)
+    return preview.removed
   }
 
   const mergeLibrary = (next) => {
@@ -670,6 +682,11 @@ export default function App() {
       data-reduced-motion={reducedMotion ? 'true' : 'false'}
       style={{ width: '100vw', height: '100vh', background: is3D ? '#05010f' : 'hsl(var(--background))' }}
     >
+      <div
+        inert={onboarding ? true : undefined}
+        aria-hidden={onboarding || undefined}
+        style={{ width: '100%', height: '100%' }}
+      >
       {is3D ? (
         webGLAvailable ? (
           <ErrorBoundary fallback={({ reset }) => <SceneErrorFallback reset={reset} />}>
@@ -747,31 +764,6 @@ export default function App() {
       <div className="sr-only" aria-live="polite" aria-atomic="true">
         {selectionAnnouncement}
       </div>
-
-      {statusMessage && (
-        <div
-          role="status"
-          style={{
-            position: 'absolute',
-            left: '50%',
-            bottom: backupReminder ? 148 : 88,
-            transform: 'translateX(-50%)',
-            zIndex: 30,
-            maxWidth: 'min(440px, calc(100vw - 32px))',
-            padding: '10px 14px',
-            borderRadius: 12,
-            color: '#fff',
-            background: 'rgba(20, 18, 35, 0.88)',
-            border: '1px solid rgba(255,255,255,0.14)',
-            fontSize: 13,
-            fontWeight: 600,
-            textAlign: 'center',
-            pointerEvents: 'none',
-          }}
-        >
-          {statusMessage}
-        </div>
-      )}
 
       {backupReminder && (
         <div
@@ -860,17 +852,10 @@ export default function App() {
             setGraphicsQuality={setGraphicsQuality}
             reducedMotion={reducedMotion}
             setReducedMotion={setReducedMotionPreference}
+            library={library}
             onRemoveDemoBooks={handleRemoveDemoBooks}
           />
         </>
-      )}
-      {onboarding && (
-        <FirstRun
-          onBrowseDemo={() => finishOnboarding(createLibraryState())}
-          onStartEmpty={() => finishOnboarding(createEmptyLibraryState())}
-          onImport={finishOnboarding}
-          onStatus={flashStatus}
-        />
       )}
 
       {is3D && (
@@ -897,6 +882,41 @@ export default function App() {
             onReorder={handleReorderBook}
           />
         </>
+      )}
+      </div>
+
+      {statusMessage && (
+        <div
+          role="status"
+          style={{
+            position: 'absolute',
+            left: '50%',
+            bottom: backupReminder ? 148 : 88,
+            transform: 'translateX(-50%)',
+            zIndex: onboarding ? 90 : 30,
+            maxWidth: 'min(440px, calc(100vw - 32px))',
+            padding: '10px 14px',
+            borderRadius: 12,
+            color: '#fff',
+            background: 'rgba(20, 18, 35, 0.88)',
+            border: '1px solid rgba(255,255,255,0.14)',
+            fontSize: 13,
+            fontWeight: 600,
+            textAlign: 'center',
+            pointerEvents: 'none',
+          }}
+        >
+          {statusMessage}
+        </div>
+      )}
+
+      {onboarding && (
+        <FirstRun
+          onBrowseDemo={() => finishOnboarding(createLibraryState())}
+          onStartEmpty={() => finishOnboarding(createEmptyLibraryState())}
+          onImport={finishOnboarding}
+          onStatus={flashStatus}
+        />
       )}
     </div>
   )

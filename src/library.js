@@ -303,6 +303,10 @@ function starterTitleById() {
   return new Map(createLibrary().map((book) => [book.id, book.title]))
 }
 
+export function demoBooksRemovalPrompt(count) {
+  return `Remove ${count} starter book${count === 1 ? '' : 's'} that still use their original titles?`
+}
+
 /** Drop starter-catalog books that still have their original id and title. */
 export function removeDemoBooks(state) {
   const starters = starterTitleById()
@@ -578,6 +582,13 @@ export function saveLibraryState(state) {
   } catch {
     return false
   }
+}
+
+/** Persist a first-run choice. Marks onboarded only after the library write succeeds. */
+export function persistOnboardingChoice(state) {
+  if (!saveLibraryState(state)) return false
+  markLibraryOnboarded()
+  return true
 }
 
 function readExistingShelves() {

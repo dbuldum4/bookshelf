@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
+import { demoBooksRemovalPrompt, removeDemoBooks } from '../library'
 
 const fontFamily =
   '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif'
@@ -98,6 +99,7 @@ function SettingsPanel({
   setGraphicsQuality,
   reducedMotion,
   setReducedMotion,
+  library = [],
   onRemoveDemoBooks,
 }) {
   const [open, setOpen] = useState(false)
@@ -287,7 +289,11 @@ function SettingsPanel({
             <h3 style={sectionLabel}>Library</h3>
             <button
               type="button"
-              onClick={() => onRemoveDemoBooks?.()}
+              onClick={() => {
+                const removed = removeDemoBooks({ books: library }).removed
+                if (removed && !window.confirm(demoBooksRemovalPrompt(removed))) return
+                onRemoveDemoBooks?.()
+              }}
               style={{
                 ...chipStyle(false, reducedMotion),
                 width: '100%',

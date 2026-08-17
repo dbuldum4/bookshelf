@@ -28,6 +28,8 @@ import {
   markLibraryOnboarded,
   needsLibraryOnboarding,
   ONBOARDING_STORAGE_KEY,
+  persistOnboardingChoice,
+  demoBooksRemovalPrompt,
   removeDemoBooks,
   normalizeReadingGoals,
   mergeBookRecords,
@@ -218,6 +220,25 @@ describe('library persistence', () => {
     expect(needsLibraryOnboarding()).toBe(false)
   })
 
+  it('does not mark onboarded when the library write fails', () => {
+    storage.setItem.mockImplementation((key, value) => {
+      if (key === 'bookshelf-library-v3') throw new Error('full')
+      storage.values.set(key, String(value))
+    })
+
+    expect(persistOnboardingChoice(createLibraryState())).toBe(false)
+    expect(storage.values.has('bookshelf-library-v3')).toBe(false)
+    expect(storage.values.get(ONBOARDING_STORAGE_KEY)).toBeUndefined()
+    expect(needsLibraryOnboarding()).toBe(true)
+  })
+
+  it('marks onboarded only after a successful library save', () => {
+    expect(persistOnboardingChoice(createEmptyLibraryState())).toBe(true)
+    expect(storage.values.has('bookshelf-library-v3')).toBe(true)
+    expect(storage.values.get(ONBOARDING_STORAGE_KEY)).toBe('true')
+    expect(needsLibraryOnboarding()).toBe(false)
+  })
+
   it('does not send onboarded users down the first-run path', () => {
     expect(needsLibraryOnboarding()).toBe(true)
     storage.values.set(ONBOARDING_STORAGE_KEY, 'true')
@@ -243,6 +264,8 @@ describe('library persistence', () => {
 
     expect(result.removed).toBe(1)
     expect(result.books.map((book) => book.id)).toEqual([renamed.id, 'mine'])
+    expect(demoBooksRemovalPrompt(1)).toBe('Remove 1 starter book that still use their original titles?')
+    expect(demoBooksRemovalPrompt(37)).toBe('Remove 37 starter books that still use their original titles?')
   })
 })
 
