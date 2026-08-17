@@ -1,11 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  computeGoalProgress,
   computeLibraryStats,
+  computeYearInReview,
   downloadLibraryExport,
   LIBRARY_SORT_OPTIONS,
+  loadReadingGoals,
   lookupBookByIsbn,
+  normalizeReadingGoals,
   parseLibraryFile,
   READING_STATUSES,
+  saveReadingGoals,
   searchAcclaimedBooks,
   sortLibrary,
 } from '../library'
@@ -67,6 +72,58 @@ function uniqueSorted(values) {
 
 function formatPages(count) {
   return new Intl.NumberFormat().format(count || 0)
+}
+
+const MONTH_LABELS = ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D']
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+]
+
+function GoalProgressBar({ label, progress, unitLabel }) {
+  const { active, current, target, ratio, remaining, met } = progress
+  if (!active) {
+    return (
+      <div style={{ display: 'grid', gap: 4 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 11, color: 'rgba(255,255,255,0.55)' }}>
+          <span>{label}</span>
+          <span>{formatPages(current)} {unitLabel} · no goal</span>
+        </div>
+        <div style={{ height: 6, borderRadius: 99, background: 'rgba(255,255,255,0.08)' }} />
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ display: 'grid', gap: 4 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 11, color: 'rgba(255,255,255,0.72)' }}>
+        <span>{label}</span>
+        <span style={{ color: met ? 'rgba(134, 239, 172, 0.95)' : 'rgba(255,255,255,0.72)' }}>
+          {formatPages(current)} / {formatPages(target)} {unitLabel}
+          {met ? ' · met' : remaining > 0 ? ` · ${formatPages(remaining)} left` : ''}
+        </span>
+      </div>
+      <div
+        role="progressbar"
+        aria-label={`${label}: ${current} of ${target} ${unitLabel}`}
+        aria-valuemin={0}
+        aria-valuemax={target}
+        aria-valuenow={Math.min(current, target)}
+        style={{ height: 6, borderRadius: 99, background: 'rgba(255,255,255,0.08)', overflow: 'hidden' }}
+      >
+        <div
+          style={{
+            width: `${Math.round(ratio * 100)}%`,
+            height: '100%',
+            borderRadius: 99,
+            background: met
+              ? 'linear-gradient(90deg, rgba(74, 222, 128, 0.85), rgba(134, 239, 172, 0.95))'
+              : 'linear-gradient(90deg, rgba(126, 91, 226, 0.9), rgba(169, 131, 255, 0.95))',
+          }}
+        />
+      </div>
+    </div>
+  )
 }
 
 const MAX_IMPORT_BYTES = 5_000_000
@@ -133,6 +190,11 @@ function LibraryPanel({
   const [importing, setImporting] = useState(false)
   /** Pending parsed import awaiting Merge / Replace / Cancel. */
   const [pendingImport, setPendingImport] = useState(null)
+  const [goals, setGoals] = useState(() => loadReadingGoals())
+  const [editingGoals, setEditingGoals] = useState(false)
+  const [goalDraft, setGoalDraft] = useState(() => loadReadingGoals())
+  const [goalError, setGoalError] = useState('')
+  const [reviewOpen, setReviewOpen] = useState(false)
   const blurTimer = useRef(null)
   const importInputRef = useRef(null)
   const transferTimer = useRef(null)
@@ -159,11 +221,47 @@ function LibraryPanel({
   }
 
   const readingStats = useMemo(() => computeLibraryStats(library), [library])
+  const yearReview = useMemo(
+    () => computeYearInReview(library, readingStats.year),
+    [library, readingStats.year],
+  )
+  const booksGoalProgress = useMemo(
+    () => computeGoalProgress(readingStats.finishedThisYear, goals.books),
+    [readingStats.finishedThisYear, goals.books],
+  )
+  const pagesGoalProgress = useMemo(
+    () => computeGoalProgress(readingStats.pagesFinishedThisYear, goals.pages),
+    [readingStats.pagesFinishedThisYear, goals.pages],
+  )
 
   const statusStats = useMemo(() => READING_STATUSES.map((value) => ({
     label: value,
     count: readingStats.byStatus[value] || 0,
   })), [readingStats])
+
+  const beginEditGoals = () => {
+    setGoalDraft(goals)
+    setGoalError('')
+    setEditingGoals(true)
+  }
+
+  const cancelEditGoals = () => {
+    setGoalDraft(goals)
+    setGoalError('')
+    setEditingGoals(false)
+  }
+
+  const commitGoals = () => {
+    const next = normalizeReadingGoals(goalDraft)
+    if (!saveReadingGoals(readingStats.year, next)) {
+      setGoalError('Could not save reading goals. Check that browser storage is available and try again.')
+      return
+    }
+    setGoals(next)
+    setGoalDraft(next)
+    setGoalError('')
+    setEditingGoals(false)
+  }
 
   const authorOptions = useMemo(
     () => uniqueSorted(library.map((book) => book.author?.trim())),
@@ -549,6 +647,288 @@ function LibraryPanel({
           </div>
           <div style={{ color: 'rgba(255,255,255,0.52)', fontSize: 10 }}>Ratings</div>
         </div>
+      </div>
+
+      <div
+        aria-label="Reading goals"
+        style={{
+          margin: '0 16px 10px',
+          padding: '10px 10px 9px',
+          borderRadius: 12,
+          background: 'rgba(255,255,255,0.045)',
+          border: '1px solid rgba(255,255,255,0.08)',
+          display: 'grid',
+          gap: 9,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.4, color: 'rgba(255,255,255,0.62)', textTransform: 'uppercase' }}>
+            {readingStats.year} goals
+          </div>
+          {!editingGoals ? (
+            <button type="button" onClick={beginEditGoals} style={{ ...actionButton(), padding: '4px 8px', fontSize: 11 }}>
+              {goals.books || goals.pages ? 'Edit goals' : 'Set goals'}
+            </button>
+          ) : (
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button type="button" onClick={cancelEditGoals} style={{ ...actionButton(), padding: '4px 8px', fontSize: 11 }}>
+                Cancel
+              </button>
+              <button type="button" onClick={commitGoals} style={{ ...actionButton(true), padding: '4px 8px', fontSize: 11 }}>
+                Save
+              </button>
+            </div>
+          )}
+        </div>
+
+        {editingGoals ? (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            <label style={{ display: 'grid', gap: 4, fontSize: 11, color: 'rgba(255,255,255,0.55)' }}>
+              Books finished
+              <input
+                aria-label="Books finished goal"
+                type="number"
+                min={0}
+                inputMode="numeric"
+                value={goalDraft.books || ''}
+                placeholder="0"
+                onChange={(event) => setGoalDraft((prev) => ({ ...prev, books: event.target.value }))}
+                style={{ ...inputStyle, height: 32, fontSize: 12 }}
+              />
+            </label>
+            <label style={{ display: 'grid', gap: 4, fontSize: 11, color: 'rgba(255,255,255,0.55)' }}>
+              Pages finished
+              <input
+                aria-label="Pages finished goal"
+                type="number"
+                min={0}
+                inputMode="numeric"
+                value={goalDraft.pages || ''}
+                placeholder="0"
+                onChange={(event) => setGoalDraft((prev) => ({ ...prev, pages: event.target.value }))}
+                style={{ ...inputStyle, height: 32, fontSize: 12 }}
+              />
+            </label>
+            <p style={{ gridColumn: '1 / -1', margin: 0, fontSize: 10, color: 'rgba(255,255,255,0.42)' }}>
+              Leave at 0 to hide a goal. Progress uses books finished this year and their page counts.
+            </p>
+            {goalError && (
+              <p role="alert" style={{ gridColumn: '1 / -1', margin: 0, fontSize: 11, color: '#ffb4b4' }}>
+                {goalError}
+              </p>
+            )}
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gap: 8 }}>
+            <GoalProgressBar label="Books" progress={booksGoalProgress} unitLabel="books" />
+            <GoalProgressBar label="Pages" progress={pagesGoalProgress} unitLabel="pages" />
+          </div>
+        )}
+      </div>
+
+      <div style={{ padding: '0 16px 12px' }}>
+        <button
+          type="button"
+          aria-expanded={reviewOpen}
+          aria-controls="year-in-review"
+          onClick={() => setReviewOpen((open) => !open)}
+          style={{
+            ...actionButton(),
+            width: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '8px 10px',
+            fontSize: 12,
+          }}
+        >
+          <span>{readingStats.year} year in review</span>
+          <span style={{ color: 'rgba(255,255,255,0.5)' }}>{reviewOpen ? '▾' : '▸'}</span>
+        </button>
+
+        {reviewOpen && (
+          <div
+            id="year-in-review"
+            aria-label={`${readingStats.year} year in review`}
+            style={{
+              marginTop: 8,
+              padding: '10px 10px 8px',
+              borderRadius: 12,
+              background: 'rgba(126, 91, 226, 0.1)',
+              border: '1px solid rgba(169, 131, 255, 0.18)',
+              display: 'grid',
+              gap: 10,
+            }}
+          >
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
+              <div style={{ borderRadius: 8, padding: '7px 8px', background: 'rgba(0,0,0,0.18)' }}>
+                <div style={{ color: '#fff', fontSize: 14, fontWeight: 700 }}>{yearReview.finishedCount}</div>
+                <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: 10 }}>Finished</div>
+              </div>
+              <div style={{ borderRadius: 8, padding: '7px 8px', background: 'rgba(0,0,0,0.18)' }}>
+                <div style={{ color: '#fff', fontSize: 14, fontWeight: 700 }}>{formatPages(yearReview.pagesFinished)}</div>
+                <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: 10 }}>Pages</div>
+              </div>
+              <div style={{ borderRadius: 8, padding: '7px 8px', background: 'rgba(0,0,0,0.18)' }}>
+                <div style={{ color: '#fff', fontSize: 14, fontWeight: 700 }}>
+                  {yearReview.ratedCount ? `${yearReview.averageRating.toFixed(1)} ★` : '—'}
+                </div>
+                <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: 10 }}>
+                  Avg{yearReview.ratedCount ? ` · ${yearReview.ratedCount}` : ''}
+                </div>
+              </div>
+            </div>
+
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.55)' }}>
+              {yearReview.previousYearFinished === 0 && yearReview.finishedCount === 0
+                ? `No finishes recorded for ${yearReview.year - 1} or ${yearReview.year} yet.`
+                : yearReview.finishedCount === yearReview.previousYearFinished
+                  ? `Tied with ${yearReview.year - 1} (${yearReview.previousYearFinished} finished).`
+                  : yearReview.finishedCount > yearReview.previousYearFinished
+                    ? `${yearReview.finishedCount - yearReview.previousYearFinished} more than ${yearReview.year - 1} (${yearReview.previousYearFinished}).`
+                    : `${yearReview.previousYearFinished - yearReview.finishedCount} behind ${yearReview.year - 1} (${yearReview.previousYearFinished}).`}
+            </div>
+
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.4, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', marginBottom: 6 }}>
+                Monthly finishes
+              </div>
+              <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 44 }}>
+                {(() => {
+                  const max = Math.max(1, ...yearReview.monthlyFinished)
+                  return yearReview.monthlyFinished.map((count, index) => {
+                    const height = count ? Math.max(4, Math.round((count / max) * 36)) : 2
+                    return (
+                      <div key={MONTH_NAMES[index]} style={{ flex: 1, display: 'grid', gap: 3, justifyItems: 'center' }}>
+                        <span
+                          title={`${MONTH_NAMES[index]}: ${count}`}
+                          style={{
+                            width: '100%',
+                            height,
+                            borderRadius: 2,
+                            background: count ? 'rgba(169, 131, 255, 0.85)' : 'rgba(255,255,255,0.1)',
+                          }}
+                        />
+                        <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.4)' }}>{MONTH_LABELS[index]}</span>
+                      </div>
+                    )
+                  })
+                })()}
+              </div>
+            </div>
+
+            {yearReview.ratedCount > 0 && (
+              <div>
+                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.4, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', marginBottom: 6 }}>
+                  Ratings this year
+                </div>
+                <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 22 }}>
+                  {(() => {
+                    const max = Math.max(1, ...[1, 2, 3, 4, 5].map((s) => yearReview.ratingCounts[s] || 0))
+                    return [1, 2, 3, 4, 5].map((star) => {
+                      const count = yearReview.ratingCounts[star] || 0
+                      const height = count ? Math.max(3, Math.round((count / max) * 18)) : 2
+                      return (
+                        <span
+                          key={star}
+                          title={`${star}★: ${count}`}
+                          style={{
+                            flex: 1,
+                            height,
+                            borderRadius: 2,
+                            background: count ? 'rgba(250, 204, 21, 0.75)' : 'rgba(255,255,255,0.12)',
+                          }}
+                        />
+                      )
+                    })
+                  })()}
+                </div>
+              </div>
+            )}
+
+            {yearReview.topRated.length > 0 && (
+              <div>
+                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.4, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', marginBottom: 6 }}>
+                  Top rated
+                </div>
+                <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 5 }}>
+                  {yearReview.topRated.map((book) => (
+                    <li key={book.id || book.title}>
+                      <button
+                        type="button"
+                        onClick={() => onSelectBook?.(book.id)}
+                        style={{
+                          width: '100%',
+                          textAlign: 'left',
+                          border: 'none',
+                          borderRadius: 8,
+                          cursor: book.id ? 'pointer' : 'default',
+                          padding: '6px 7px',
+                          color: '#fff',
+                          background: 'rgba(0,0,0,0.16)',
+                          font: 'inherit',
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          gap: 8,
+                        }}
+                      >
+                        <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12 }}>
+                          {book.title}
+                          {book.author ? (
+                            <span style={{ color: 'rgba(255,255,255,0.45)' }}> · {book.author}</span>
+                          ) : null}
+                        </span>
+                        <span style={{ flexShrink: 0, fontSize: 11, color: 'rgba(250, 204, 21, 0.9)' }}>
+                          {book.rating}★
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {yearReview.books.length > 0 && (
+              <div>
+                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.4, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', marginBottom: 6 }}>
+                  Finished in {yearReview.year}
+                </div>
+                <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 4, maxHeight: 140, overflow: 'auto' }}>
+                  {yearReview.books.map((book) => (
+                    <li key={`finished-${book.id || book.title}`}>
+                      <button
+                        type="button"
+                        onClick={() => onSelectBook?.(book.id)}
+                        style={{
+                          width: '100%',
+                          textAlign: 'left',
+                          border: 'none',
+                          borderRadius: 7,
+                          cursor: book.id ? 'pointer' : 'default',
+                          padding: '5px 6px',
+                          color: 'rgba(255,255,255,0.85)',
+                          background: 'transparent',
+                          font: 'inherit',
+                          fontSize: 11,
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          gap: 8,
+                        }}
+                      >
+                        <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {book.title}
+                        </span>
+                        <span style={{ flexShrink: 0, color: 'rgba(255,255,255,0.4)' }}>
+                          {book.finishedAt ? String(book.finishedAt).slice(0, 10) : ''}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <div style={{ display: 'grid', gap: 8, padding: '0 16px 12px' }}>

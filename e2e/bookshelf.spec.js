@@ -59,9 +59,23 @@ test('opens settings and switches graphics quality without showing the WebGL fal
 test('shows reading stats and sort controls in the library panel', async ({ page }) => {
   await expect(page.getByLabel('Reading stats')).toBeVisible()
   await expect(page.getByText('Pages read')).toBeVisible()
+  await expect(page.getByLabel('Reading goals')).toBeVisible()
   await expect(page.getByLabel('Sort library')).toBeVisible()
   await page.getByLabel('Sort library').selectOption('title')
   await expect(page.getByLabel('Sort library')).toHaveValue('title')
+})
+
+test('sets reading goals and expands year in review', async ({ page }) => {
+  await page.getByRole('button', { name: /goals/i }).click()
+  await page.getByLabel('Books finished goal').fill('12')
+  await page.getByLabel('Pages finished goal').fill('5000')
+  await page.getByRole('button', { name: 'Save' }).click()
+  await expect(page.getByRole('progressbar', { name: /Books: 0 of 12 books/ })).toBeVisible()
+  await expect(page.getByRole('progressbar', { name: /Pages: 0 of .* pages/ })).toBeVisible()
+
+  await page.getByRole('button', { name: /year in review/i }).click()
+  await expect(page.getByLabel(/year in review$/i)).toBeVisible()
+  await expect(page.getByText('Monthly finishes')).toBeVisible()
 })
 
 test('keeps an add-book draft when the selected shelf is full', async ({ page }) => {

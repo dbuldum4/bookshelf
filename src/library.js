@@ -1509,11 +1509,30 @@ export function sortLibrary(books, sortBy = 'shelf') {
 
 function yearFromDateString(value) {
   if (typeof value !== 'string' || !value) return null
+  const calendarDate = value.match(/^(\d{4})-(\d{2})(?:-(\d{2}))?(?:$|T)/)
+  if (calendarDate) return Number(calendarDate[1])
   const parsed = Date.parse(value)
   if (Number.isFinite(parsed)) return new Date(parsed).getFullYear()
   if (value.length >= 4) {
     const year = Number(value.slice(0, 4))
     return Number.isInteger(year) ? year : null
+  }
+  return null
+}
+
+function monthFromDateString(value) {
+  if (typeof value !== 'string' || !value) return null
+  const calendarDate = value.match(/^(\d{4})-(\d{2})(?:-(\d{2}))?(?:$|T)/)
+  if (calendarDate) {
+    const month = Number(calendarDate[2])
+    return month >= 1 && month <= 12 ? month - 1 : null
+  }
+  const parsed = Date.parse(value)
+  if (Number.isFinite(parsed)) return new Date(parsed).getMonth()
+  // YYYY-MM or YYYY-MM-DD without full parse
+  if (value.length >= 7 && value[4] === '-') {
+    const month = Number(value.slice(5, 7))
+    if (Number.isInteger(month) && month >= 1 && month <= 12) return month - 1
   }
   return null
 }
@@ -1529,6 +1548,7 @@ export function computeLibraryStats(library, now = new Date()) {
   const ratingCounts = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }
   let finishedThisYear = 0
   let pagesRead = 0
+  let pagesFinishedThisYear = 0
   let ratingSum = 0
   let ratedCount = 0
 
@@ -1544,8 +1564,12 @@ export function computeLibraryStats(library, now = new Date()) {
     }
 
     if (status === 'Finished') {
-      pagesRead += asNumber(book.pageCount)
-      if (yearFromDateString(book.finishedAt) === year) finishedThisYear += 1
+      const pages = asNumber(book.pageCount)
+      pagesRead += pages
+      if (yearFromDateString(book.finishedAt) === year) {
+        finishedThisYear += 1
+        pagesFinishedThisYear += pages
+      }
     } else if (status === 'Reading') {
       pagesRead += asNumber(book.currentPage)
     }
@@ -1556,10 +1580,197 @@ export function computeLibraryStats(library, now = new Date()) {
     byStatus,
     finishedThisYear,
     pagesRead,
+    pagesFinishedThisYear,
     averageRating: ratedCount ? ratingSum / ratedCount : 0,
     ratedCount,
     ratingCounts,
     year,
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Reading goals                                                       */
+/* ------------------------------------------------------------------ */
+
+export const READING_GOALS_STORAGE_KEY = 'bookshelf-reading-goals'
+/** Soft caps so accidental huge inputs do not break the UI. */
+export const READING_GOAL_MAX_BOOKS = 10_000
+export const READING_GOAL_MAX_PAGES = 10_000_000
+
+/**
+ * Normalize a goals object. Zero means "no goal set" for that metric.
+ * @returns {{ books: number, pages: number }}
+ */
+export function normalizeReadingGoals(value) {
+  const books = Math.min(
+    READING_GOAL_MAX_BOOKS,
+    Math.max(0, Math.round(Number(value?.books) || 0)),
+  )
+  const pages = Math.min(
+    READING_GOAL_MAX_PAGES,
+    Math.max(0, Math.round(Number(value?.pages) || 0)),
+  )
+  return { books, pages }
+}
+
+/**
+ * Load yearly reading goals from localStorage.
+ * @param {number} [year]
+ * @returns {{ books: number, pages: number }}
+ */
+export function loadReadingGoals(year = new Date().getFullYear()) {
+  if (typeof window === 'undefined') return normalizeReadingGoals(null)
+  try {
+    const raw = window.localStorage.getItem(READING_GOALS_STORAGE_KEY)
+    if (!raw) return normalizeReadingGoals(null)
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return normalizeReadingGoals(null)
+    }
+
+    // Per-year map: { "2026": { books, pages }, ... }
+    const yearEntry = parsed[String(year)]
+    if (yearEntry && typeof yearEntry === 'object') {
+      return normalizeReadingGoals(yearEntry)
+    }
+
+    // Legacy flat shape { books, pages } with no year keys.
+    const hasYearKeys = Object.keys(parsed).some((key) => /^\d{4}$/.test(key))
+    if (!hasYearKeys && ('books' in parsed || 'pages' in parsed)) {
+      return normalizeReadingGoals(parsed)
+    }
+  } catch {
+    // Quota errors, private mode, or corrupt JSON — treat as unset.
+  }
+  return normalizeReadingGoals(null)
+}
+
+/**
+ * Persist reading goals for a calendar year (merged into the year map).
+ * @param {number} year
+ * @param {{ books?: number, pages?: number }} goals
+ */
+export function saveReadingGoals(year, goals) {
+  if (typeof window === 'undefined') return false
+  const y = Number(year)
+  if (!Number.isInteger(y) || y < 1970 || y > 2100) return false
+  const next = normalizeReadingGoals(goals)
+  try {
+    let map = {}
+    const raw = window.localStorage.getItem(READING_GOALS_STORAGE_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        if (Object.keys(parsed).some((key) => /^\d{4}$/.test(key))) {
+          map = { ...parsed }
+        } else if ('books' in parsed || 'pages' in parsed) {
+          // Migrate flat shape into the year map under the year being saved.
+          map = { [String(y)]: normalizeReadingGoals(parsed) }
+        }
+      }
+    }
+    map[String(y)] = next
+    window.localStorage.setItem(READING_GOALS_STORAGE_KEY, JSON.stringify(map))
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Progress toward a single numeric goal. target 0 = inactive.
+ * @returns {{ active: boolean, current: number, target: number, ratio: number, remaining: number, met: boolean }}
+ */
+export function computeGoalProgress(current, target) {
+  const cur = Math.max(0, Math.round(Number(current) || 0))
+  const tgt = Math.max(0, Math.round(Number(target) || 0))
+  if (!tgt) {
+    return { active: false, current: cur, target: 0, ratio: 0, remaining: 0, met: false }
+  }
+  return {
+    active: true,
+    current: cur,
+    target: tgt,
+    ratio: Math.min(1, cur / tgt),
+    remaining: Math.max(0, tgt - cur),
+    met: cur >= tgt,
+  }
+}
+
+/**
+ * Year-scoped reading review built on the same book fields as library stats.
+ * Includes monthly finishes, ratings of finished books, and prior-year count.
+ *
+ * @param {unknown} library
+ * @param {number | Date} [yearOrNow] calendar year, or Date (uses that year)
+ */
+export function computeYearInReview(library, yearOrNow = new Date()) {
+  const year = yearOrNow instanceof Date
+    ? yearOrNow.getFullYear()
+    : (Number.isInteger(Number(yearOrNow)) ? Number(yearOrNow) : new Date().getFullYear())
+  const books = Array.isArray(library) ? library : []
+  const monthlyFinished = Array.from({ length: 12 }, () => 0)
+  const ratingCounts = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }
+  const finishedBooks = []
+  let previousYearFinished = 0
+  let pagesFinished = 0
+  let ratingSum = 0
+  let ratedCount = 0
+
+  for (const book of books) {
+    const status = READING_STATUSES.includes(book.status) ? book.status : 'Want to Read'
+    if (status !== 'Finished') continue
+
+    const finishedYear = yearFromDateString(book.finishedAt)
+    if (finishedYear === year - 1) previousYearFinished += 1
+    if (finishedYear !== year) continue
+
+    const pages = asNumber(book.pageCount)
+    pagesFinished += pages
+    const rating = Math.min(5, Math.max(0, Math.round(Number(book.rating) || 0)))
+    ratingCounts[rating] += 1
+    if (rating > 0) {
+      ratingSum += rating
+      ratedCount += 1
+    }
+
+    const month = monthFromDateString(book.finishedAt)
+    if (month != null) monthlyFinished[month] += 1
+
+    finishedBooks.push({
+      id: book.id,
+      title: book.title || 'Untitled',
+      author: book.author || '',
+      rating,
+      finishedAt: book.finishedAt || '',
+      pageCount: pages,
+      coverUrl: book.coverUrl || '',
+      color: book.color || '',
+    })
+  }
+
+  finishedBooks.sort((a, b) => {
+    const byDate = compareDateDesc(a.finishedAt, b.finishedAt)
+    if (byDate) return byDate
+    return compareText(a.title, b.title)
+  })
+
+  const topRated = [...finishedBooks]
+    .filter((book) => book.rating > 0)
+    .sort((a, b) => b.rating - a.rating || compareDateDesc(a.finishedAt, b.finishedAt) || compareText(a.title, b.title))
+    .slice(0, 5)
+
+  return {
+    year,
+    finishedCount: finishedBooks.length,
+    pagesFinished,
+    averageRating: ratedCount ? ratingSum / ratedCount : 0,
+    ratedCount,
+    ratingCounts,
+    monthlyFinished,
+    previousYearFinished,
+    books: finishedBooks,
+    topRated,
   }
 }
 

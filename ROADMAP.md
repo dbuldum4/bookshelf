@@ -14,6 +14,7 @@ Personal Library v1 is complete. The next focus is making large libraries feel l
 - [x] Import Goodreads-style CSV and export library data.
 - [x] Add author, tag, and rating filters plus favorite quotes.
 - [x] Show library stats (finished this year, pages read, ratings).
+- [x] Reading goals and year-in-review (progress bars, monthly finishes, top ratings).
 - [x] Add reduced-motion, graphics-quality, keyboard navigation, focus, and mobile control options.
 - [x] Add accessibility and performance controls, automated tests, and resilient fallbacks.
 - [x] Add CI/CD, GitHub Pages deploy, and release infrastructure.
@@ -39,6 +40,8 @@ Personal Library v1 is complete. The next focus is making large libraries feel l
    - Completed: favorite quotes.
    - Completed: dedicated status, author, tag, and rating filters.
    - Completed: library stats for finished-this-year, pages, and ratings.
+   - Completed: yearly reading goals (books / pages) with progress bars.
+   - Completed: year-in-review (monthly finishes, year ratings, top-rated list, YoY compare).
 
 4. **A library view alongside the 3D scene**
    - Completed: provide a searchable list for efficient management.
@@ -86,6 +89,5 @@ Named cases live together in one walkable room. Books belong to exactly one shel
 ### Out of scope (later)
 
 - Full cloud sync or accounts.
-- Reading goals / year-in-review.
 - Shareable public shelf links.
 - Pointer-lock FPS; tilt/pitch of cases.

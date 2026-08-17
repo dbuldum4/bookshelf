@@ -12,7 +12,7 @@ A procedural 3D bookshelf scene built with React, Vite, Three.js, and Rapier phy
 - A curated 40-book library with real titles and authors rendered on each spine.
 - Selectable books that pull forward and open an editable detail card.
 - Reading status and personal notes saved locally in the browser.
-- Library panel with search, filters, sort, reading stats (finished this year, pages read, ratings), and JSON or Goodreads CSV import/export (merge or replace), plus a periodic backup reminder.
+- Library panel with search, filters, sort, reading stats (finished this year, pages read, ratings), yearly reading goals, year-in-review, and JSON or Goodreads CSV import/export (merge or replace), plus a periodic backup reminder.
 - Arrange mode room presets (Wall, L-shape, Gallery) and named case plaques on each 3D shelf.
 - Drag book spines in the 3D view to reorder them on a shelf; order is stored automatically with the library.
 - Cover art from Open Library rendered on 3D spines and front covers when available.
@@ -84,11 +84,11 @@ src/
   components/
     Controls.jsx          # Camera modes, shelf pager, and play-mode controls
     SettingsPanel.jsx     # Top-right settings (galaxy, graphics, motion)
-    LibraryPanel.jsx      # Searchable library list, stats, sort, import/export
+    LibraryPanel.jsx      # Searchable library list, stats, goals, year-in-review, import/export
     BookDetails.jsx       # Selected-book metadata, status, and notes
     ErrorBoundary.jsx     # Recoverable application error screen
     WebGLFallback.jsx     # Non-3D library experience when WebGL is unavailable
-  library.js              # Book catalog, shelf layout, stats, CSV/JSON transfer
+  library.js              # Book catalog, shelf layout, stats, goals, CSV/JSON transfer
   library.test.js         # Persistence and shelf-layout unit tests
   webgl.js                # WebGL capability detection
   scene/

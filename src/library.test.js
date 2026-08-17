@@ -9,7 +9,9 @@ import {
   buildShelfBooks,
   buildShelfCaseLayout,
   clampShelvesToRoom,
+  computeGoalProgress,
   computeLibraryStats,
+  computeYearInReview,
   createDefaultShelf,
   createLibrary,
   createLibraryState,
@@ -20,7 +22,9 @@ import {
   ensureLibraryCapacity,
   loadLibrary,
   loadLibraryState,
+  loadReadingGoals,
   markLibraryBackupDone,
+  normalizeReadingGoals,
   mergeBookRecords,
   mergeLibraryStates,
   mergeNotes,
@@ -28,6 +32,7 @@ import {
   parseLibraryCsv,
   parseLibraryFile,
   parseLibraryImport,
+  saveReadingGoals,
   insertionIndexFromLocalPoint,
   reorderBookOnShelf,
   reorderBookToIndex,
@@ -411,11 +416,108 @@ describe('library sort and stats', () => {
 
     expect(stats.finishedThisYear).toBe(1)
     expect(stats.pagesRead).toBe(540)
+    expect(stats.pagesFinishedThisYear).toBe(300)
     expect(stats.averageRating).toBe(4)
     expect(stats.ratedCount).toBe(2)
     expect(stats.ratingCounts[5]).toBe(1)
     expect(stats.byStatus.Finished).toBe(2)
     expect(stats.year).toBe(2026)
+  })
+
+  it('builds a year-in-review with monthly finishes, ratings, and prior year', () => {
+    const review = computeYearInReview([
+      { id: 'a', title: 'Alpha', author: 'Ann', status: 'Finished', pageCount: 300, rating: 5, finishedAt: '2026-01-15' },
+      { id: 'b', title: 'Beta', author: 'Bob', status: 'Finished', pageCount: 120, rating: 4, finishedAt: '2026-01-28' },
+      { id: 'c', title: 'Gamma', author: 'Ann', status: 'Finished', pageCount: 200, rating: 3, finishedAt: '2026-06-02' },
+      { id: 'd', title: 'Delta', author: 'Dee', status: 'Finished', pageCount: 90, rating: 5, finishedAt: '2025-12-01' },
+      { id: 'e', title: 'Reading', author: 'Eve', status: 'Reading', pageCount: 400, currentPage: 40, rating: 0, finishedAt: '' },
+    ], 2026)
+
+    expect(review.year).toBe(2026)
+    expect(review.finishedCount).toBe(3)
+    expect(review.pagesFinished).toBe(620)
+    expect(review.previousYearFinished).toBe(1)
+    expect(review.monthlyFinished[0]).toBe(2)
+    expect(review.monthlyFinished[5]).toBe(1)
+    expect(review.averageRating).toBeCloseTo(4)
+    expect(review.ratedCount).toBe(3)
+    expect(review.ratingCounts[5]).toBe(1)
+    expect(review.books.map((book) => book.title)).toEqual(['Gamma', 'Beta', 'Alpha'])
+    expect(review.topRated.map((book) => book.title)).toEqual(['Alpha', 'Beta', 'Gamma'])
+  })
+
+  it('treats stored calendar dates as calendar dates in negative UTC offsets', () => {
+    const originalTimezone = process.env.TZ
+    process.env.TZ = 'America/New_York'
+    try {
+      const book = { id: 'new-year', title: 'New Year', status: 'Finished', pageCount: 100, finishedAt: '2026-01-01' }
+      const stats = computeLibraryStats([book], new Date(2026, 6, 1))
+      const review = computeYearInReview([book], 2026)
+
+      expect(stats.finishedThisYear).toBe(1)
+      expect(stats.pagesFinishedThisYear).toBe(100)
+      expect(review.finishedCount).toBe(1)
+      expect(review.monthlyFinished[0]).toBe(1)
+      expect(review.previousYearFinished).toBe(0)
+    } finally {
+      if (originalTimezone === undefined) delete process.env.TZ
+      else process.env.TZ = originalTimezone
+    }
+  })
+})
+
+describe('reading goals', () => {
+  beforeEach(() => {
+    const store = new Map()
+    const storage = {
+      getItem: (key) => (store.has(key) ? store.get(key) : null),
+      setItem: (key, value) => { store.set(key, String(value)) },
+      removeItem: (key) => { store.delete(key) },
+    }
+    vi.stubGlobal('window', { localStorage: storage })
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('normalizes goals and clamps invalid values', () => {
+    expect(normalizeReadingGoals(null)).toEqual({ books: 0, pages: 0 })
+    expect(normalizeReadingGoals({ books: 24.6, pages: '10000' })).toEqual({ books: 25, pages: 10000 })
+    expect(normalizeReadingGoals({ books: -3, pages: -1 })).toEqual({ books: 0, pages: 0 })
+  })
+
+  it('persists goals per calendar year', () => {
+    expect(loadReadingGoals(2026)).toEqual({ books: 0, pages: 0 })
+    expect(saveReadingGoals(2026, { books: 24, pages: 8000 })).toBe(true)
+    expect(loadReadingGoals(2026)).toEqual({ books: 24, pages: 8000 })
+    expect(loadReadingGoals(2025)).toEqual({ books: 0, pages: 0 })
+    expect(saveReadingGoals(2025, { books: 12, pages: 0 })).toBe(true)
+    expect(loadReadingGoals(2025)).toEqual({ books: 12, pages: 0 })
+    expect(loadReadingGoals(2026)).toEqual({ books: 24, pages: 8000 })
+  })
+
+  it('reports a storage failure instead of claiming goals were saved', () => {
+    vi.stubGlobal('window', {
+      localStorage: {
+        getItem: () => null,
+        setItem: () => { throw new Error('storage unavailable') },
+      },
+    })
+
+    expect(saveReadingGoals(2026, { books: 24, pages: 8000 })).toBe(false)
+  })
+
+  it('computes goal progress including met and inactive states', () => {
+    expect(computeGoalProgress(5, 0)).toEqual({
+      active: false, current: 5, target: 0, ratio: 0, remaining: 0, met: false,
+    })
+    expect(computeGoalProgress(6, 12)).toEqual({
+      active: true, current: 6, target: 12, ratio: 0.5, remaining: 6, met: false,
+    })
+    expect(computeGoalProgress(15, 12)).toMatchObject({
+      active: true, current: 15, target: 12, ratio: 1, remaining: 0, met: true,
+    })
   })
 })
 
