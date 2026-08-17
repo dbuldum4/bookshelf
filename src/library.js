@@ -304,7 +304,8 @@ function starterTitleById() {
 }
 
 export function demoBooksRemovalPrompt(count) {
-  return `Remove ${count} starter book${count === 1 ? '' : 's'} that still use their original titles?`
+  if (count === 1) return 'Remove 1 starter book that still uses its original title?'
+  return `Remove ${count} starter books that still use their original titles?`
 }
 
 /** Drop starter-catalog books that still have their original id and title. */

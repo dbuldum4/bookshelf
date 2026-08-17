@@ -264,7 +264,7 @@ describe('library persistence', () => {
 
     expect(result.removed).toBe(1)
     expect(result.books.map((book) => book.id)).toEqual([renamed.id, 'mine'])
-    expect(demoBooksRemovalPrompt(1)).toBe('Remove 1 starter book that still use their original titles?')
+    expect(demoBooksRemovalPrompt(1)).toBe('Remove 1 starter book that still uses its original title?')
     expect(demoBooksRemovalPrompt(37)).toBe('Remove 37 starter books that still use their original titles?')
   })
 })
