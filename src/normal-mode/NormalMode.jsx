@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { BookOpen, Box, Download, Layers, Settings, SlidersHorizontal } from 'lucide-react'
+import { HelpTrigger } from '@/components/HelpOverlay'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { BookList } from './BookList'
@@ -37,6 +38,8 @@ function NormalMode({
   onExport,
   onToggle3D,
   onStatus,
+  helpOpen = false,
+  onOpenChangeHelp,
   reducedMotion,
   setReducedMotion,
   graphicsQuality,
@@ -100,10 +103,19 @@ function NormalMode({
           <Box className="h-6 w-6" />
           <h1 className="font-serif text-xl font-semibold tracking-tight">Bookshelf</h1>
         </div>
-        <Button variant="outline" onClick={onToggle3D}>
-          <Box className="h-4 w-4 sm:mr-2" />
-          <span className="hidden sm:inline">3D view</span>
-        </Button>
+        <div className="flex items-center gap-2">
+          {typeof onOpenChangeHelp === 'function' && (
+            <HelpTrigger
+              open={helpOpen}
+              onOpenChange={onOpenChangeHelp}
+              reducedMotion={reducedMotion}
+            />
+          )}
+          <Button variant="outline" onClick={onToggle3D}>
+            <Box className="h-4 w-4 sm:mr-2" />
+            <span className="hidden sm:inline">3D view</span>
+          </Button>
+        </div>
       </header>
 
       <Tabs value={activeTab} onValueChange={handleTabChange} className="flex flex-1 overflow-hidden">

@@ -1,16 +1,21 @@
-import { useEffect, useId, useRef } from 'react'
+import { forwardRef, useEffect, useId, useRef } from 'react'
+import { createPortal } from 'react-dom'
 
 const fontFamily =
   '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif'
+
+export const HELP_DIALOG_ID = 'bookshelf-help-dialog'
 
 const HELP_ITEMS = [
   {
     title: 'Walk',
     detail: 'WASD to move, Space to jump, drag to look around.',
+    mode: '3d',
   },
   {
     title: 'Select books',
     detail: 'Arrow keys move between books. Home and End jump to the first or last book.',
+    mode: '3d',
   },
   {
     title: 'Escape',
@@ -19,16 +24,21 @@ const HELP_ITEMS = [
   {
     title: 'Arrange',
     detail: 'Drag cases on the floor to place them.',
+    mode: '3d',
   },
   {
     title: 'Play',
     detail: 'Drag books to grab them, then release to fling.',
+    mode: '3d',
   },
   {
     title: 'Normal / 3D',
     detail: 'Switch views from the top controls.',
   },
 ]
+
+// Above Normal-mode Sheet (z-50) so Help is never trapped under BookSheet.
+const HELP_LAYER_Z = 60
 
 const dialogStyle = {
   position: 'fixed',
@@ -50,7 +60,7 @@ const dialogStyle = {
   padding: '14px 14px 16px',
   display: 'grid',
   gap: 14,
-  zIndex: 41,
+  zIndex: HELP_LAYER_Z + 1,
   pointerEvents: 'auto',
   outline: 'none',
 }
@@ -91,17 +101,33 @@ function getFocusableElements(root) {
   )
 }
 
-function triggerWrapStyle(is3D, besideSettings) {
+function triggerWrapStyle(besideSettings) {
   if (besideSettings) {
     // Sit immediately left of the Settings trigger (top: 16, right: 16, ~90px wide).
     return { position: 'absolute', top: 16, right: 114, zIndex: 30, pointerEvents: 'none' }
   }
-  if (is3D) {
-    return { position: 'absolute', top: 16, right: 16, zIndex: 30, pointerEvents: 'none' }
-  }
-  // Normal mode: header row, left of the "3D view" button.
-  return { position: 'absolute', top: 12, right: 132, zIndex: 30, pointerEvents: 'none' }
+  return { position: 'absolute', top: 16, right: 16, zIndex: 30, pointerEvents: 'none' }
 }
+
+export const HelpTrigger = forwardRef(function HelpTrigger(
+  { open, onOpenChange, reducedMotion = false },
+  ref,
+) {
+  return (
+    <button
+      ref={ref}
+      type="button"
+      aria-expanded={open}
+      aria-controls={HELP_DIALOG_ID}
+      aria-haspopup="dialog"
+      title="Keyboard and mode help (?)"
+      onClick={() => onOpenChange(!open)}
+      style={triggerStyle(open, reducedMotion)}
+    >
+      Help
+    </button>
+  )
+})
 
 function HelpOverlay({
   open,
@@ -109,11 +135,12 @@ function HelpOverlay({
   reducedMotion = false,
   is3D = true,
   besideSettings = false,
+  showTrigger = true,
 }) {
-  const panelId = useId()
   const titleId = useId()
   const triggerRef = useRef(null)
   const dialogRef = useRef(null)
+  const items = HELP_ITEMS.filter((item) => is3D || item.mode !== '3d')
 
   useEffect(() => {
     if (!open) return undefined
@@ -169,6 +196,78 @@ function HelpOverlay({
     }
   }, [open, onOpenChange])
 
+  const layer = open ? (
+    <>
+      <div
+        data-help-backdrop
+        aria-hidden="true"
+        onClick={() => onOpenChange(false)}
+        style={{
+          position: 'fixed',
+          inset: 0,
+          zIndex: HELP_LAYER_Z,
+          background: 'rgba(0, 0, 0, 0.45)',
+        }}
+      />
+      <div
+        ref={dialogRef}
+        id={HELP_DIALOG_ID}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        data-modal="true"
+        tabIndex={-1}
+        style={dialogStyle}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+          <h2
+            id={titleId}
+            style={{ margin: 0, fontFamily: 'Georgia, "Times New Roman", serif', fontSize: 20, fontWeight: 500 }}
+          >
+            Help
+          </h2>
+          <button
+            type="button"
+            aria-label="Close help"
+            onClick={() => onOpenChange(false)}
+            style={{
+              border: '1px solid rgba(255,255,255,0.12)',
+              cursor: 'pointer',
+              padding: '6px 10px',
+              fontSize: 12,
+              fontWeight: 600,
+              color: 'rgba(255,255,255,0.62)',
+              background: 'transparent',
+              borderRadius: 8,
+              flex: '0 0 auto',
+            }}
+          >
+            ×
+          </button>
+        </div>
+
+        <p style={{ margin: 0, color: 'rgba(255,255,255,0.62)', fontSize: 13, lineHeight: 1.45 }}>
+          Keyboard shortcuts and view modes.
+        </p>
+
+        <dl style={{ margin: 0, display: 'grid', gap: 12 }}>
+          {items.map((item) => (
+            <div key={item.title}>
+              <dt style={sectionLabel}>{item.title}</dt>
+              <dd style={{ margin: 0, color: 'rgba(255,255,255,0.86)', fontSize: 13, lineHeight: 1.45 }}>
+                {item.detail}
+              </dd>
+            </div>
+          ))}
+        </dl>
+
+        <p style={{ margin: 0, color: 'rgba(255,255,255,0.45)', fontSize: 11, lineHeight: 1.4 }}>
+          Press ? to open or close this help.
+        </p>
+      </div>
+    </>
+  ) : null
+
   return (
     <>
       {besideSettings && (
@@ -182,93 +281,20 @@ function HelpOverlay({
         </style>
       )}
 
-      <div className="help-overlay-root" style={triggerWrapStyle(is3D, besideSettings)}>
-        <div style={{ pointerEvents: 'auto' }}>
-          <button
-            ref={triggerRef}
-            type="button"
-            aria-expanded={open}
-            aria-controls={panelId}
-            aria-haspopup="dialog"
-            title="Keyboard and mode help (?)"
-            onClick={() => onOpenChange(!open)}
-            style={triggerStyle(open, reducedMotion)}
-          >
-            Help
-          </button>
-        </div>
-      </div>
-
-      {open && (
-        <>
-          <div
-            aria-hidden="true"
-            onClick={() => onOpenChange(false)}
-            style={{
-              position: 'fixed',
-              inset: 0,
-              zIndex: 40,
-              background: 'rgba(0, 0, 0, 0.45)',
-            }}
-          />
-          <div
-            ref={dialogRef}
-            id={panelId}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby={titleId}
-            data-modal="true"
-            tabIndex={-1}
-            style={dialogStyle}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-              <h2
-                id={titleId}
-                style={{ margin: 0, fontFamily: 'Georgia, "Times New Roman", serif', fontSize: 20, fontWeight: 500 }}
-              >
-                Help
-              </h2>
-              <button
-                type="button"
-                aria-label="Close help"
-                onClick={() => onOpenChange(false)}
-                style={{
-                  border: '1px solid rgba(255,255,255,0.12)',
-                  cursor: 'pointer',
-                  padding: '6px 10px',
-                  fontSize: 12,
-                  fontWeight: 600,
-                  color: 'rgba(255,255,255,0.62)',
-                  background: 'transparent',
-                  borderRadius: 8,
-                  flex: '0 0 auto',
-                }}
-              >
-                ×
-              </button>
-            </div>
-
-            <p style={{ margin: 0, color: 'rgba(255,255,255,0.62)', fontSize: 13, lineHeight: 1.45 }}>
-              Keyboard shortcuts and view modes.
-            </p>
-
-            <dl style={{ margin: 0, display: 'grid', gap: 12 }}>
-              {HELP_ITEMS.map((item) => (
-                <div key={item.title}>
-                  <dt style={sectionLabel}>{item.title}</dt>
-                  <dd style={{ margin: 0, color: 'rgba(255,255,255,0.86)', fontSize: 13, lineHeight: 1.45 }}>
-                    {item.detail}
-                  </dd>
-                </div>
-              ))}
-            </dl>
-
-            <p style={{ margin: 0, color: 'rgba(255,255,255,0.45)', fontSize: 11, lineHeight: 1.4 }}>
-              Press ? to open or close this help.
-            </p>
+      {showTrigger && (
+        <div className="help-overlay-root" style={triggerWrapStyle(besideSettings)}>
+          <div style={{ pointerEvents: 'auto' }}>
+            <HelpTrigger
+              ref={triggerRef}
+              open={open}
+              onOpenChange={onOpenChange}
+              reducedMotion={reducedMotion}
+            />
           </div>
-        </>
+        </div>
       )}
+
+      {layer && createPortal(layer, document.body)}
     </>
   )
 }

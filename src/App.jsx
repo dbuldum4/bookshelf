@@ -734,6 +734,8 @@ export default function App() {
           onExport={handleBackupExport}
           onToggle3D={() => setViewMode('3d')}
           onStatus={flashStatus}
+          helpOpen={helpOpen}
+          onOpenChangeHelp={setHelpOpen}
           reducedMotion={reducedMotion}
           setReducedMotion={setReducedMotionPreference}
           graphicsQuality={graphicsQuality}
@@ -893,6 +895,7 @@ export default function App() {
         reducedMotion={reducedMotion}
         is3D={is3D}
         besideSettings={is3D && webGLAvailable}
+        showTrigger={is3D}
       />
     </div>
   )
