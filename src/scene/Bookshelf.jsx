@@ -10,10 +10,12 @@ import {
 } from '../library'
 import { lockLook, unlockLook } from './lookLock'
 
-function makeCaseLabelTexture(name, selected = false) {
+function makeCaseLabelTexture(name, selected = false, aspect = 4) {
   const canvas = document.createElement('canvas')
-  canvas.width = 512
-  canvas.height = 128
+  const height = 160
+  const width = Math.round(Math.min(Math.max(height * aspect, 256), 1024))
+  canvas.width = width
+  canvas.height = height
   const ctx = canvas.getContext('2d')
   if (!ctx) {
     const tex = new THREE.CanvasTexture(canvas)
@@ -21,22 +23,28 @@ function makeCaseLabelTexture(name, selected = false) {
     return tex
   }
 
-  const bg = ctx.createLinearGradient(0, 0, 0, canvas.height)
+  const bg = ctx.createLinearGradient(0, 0, 0, height)
   bg.addColorStop(0, selected ? '#4a3570' : '#3a2818')
   bg.addColorStop(1, selected ? '#2a1c48' : '#24180f')
   ctx.fillStyle = bg
-  ctx.fillRect(0, 0, canvas.width, canvas.height)
+  ctx.fillRect(0, 0, width, height)
 
+  const pad = Math.max(6, Math.round(height * 0.06))
   ctx.strokeStyle = selected ? 'rgba(200, 170, 255, 0.55)' : 'rgba(210, 180, 130, 0.35)'
-  ctx.lineWidth = 4
-  ctx.strokeRect(6, 6, canvas.width - 12, canvas.height - 12)
+  ctx.lineWidth = Math.max(3, Math.round(height * 0.035))
+  ctx.strokeRect(pad, pad, width - pad * 2, height - pad * 2)
 
-  ctx.fillStyle = selected ? '#f0e8ff' : '#f4eadc'
-  ctx.font = '700 42px Georgia, "Times New Roman", serif'
+  const label = String(name || 'Shelf').trim() || 'Shelf'
+  const maxTextW = width - pad * 4
+  let fontSize = Math.floor(height * 0.62)
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
-  const label = String(name || 'Shelf').trim() || 'Shelf'
-  ctx.fillText(label, canvas.width / 2, canvas.height / 2 + 2, canvas.width - 48)
+  ctx.fillStyle = selected ? '#f0e8ff' : '#f4eadc'
+  for (; fontSize >= 18; fontSize -= 2) {
+    ctx.font = `700 ${fontSize}px Georgia, "Times New Roman", serif`
+    if (ctx.measureText(label).width <= maxTextW) break
+  }
+  ctx.fillText(label, width / 2, height / 2 + fontSize * 0.04)
 
   const tex = new THREE.CanvasTexture(canvas)
   tex.colorSpace = THREE.SRGBColorSpace
@@ -45,22 +53,23 @@ function makeCaseLabelTexture(name, selected = false) {
 }
 
 function CaseNamePlaque({ name, topY, width, selected }) {
+  const plaqueW = Math.min(Math.max(width * 0.55, 1.4), width - 0.4, 4.5)
+  const plaqueH = 0.72
+  const aspect = plaqueW / plaqueH
+
   const texture = useMemo(
-    () => makeCaseLabelTexture(name, selected),
-    [name, selected],
+    () => makeCaseLabelTexture(name, selected, aspect),
+    [name, selected, aspect],
   )
   useEffect(() => () => texture.dispose(), [texture])
 
-  const plaqueW = Math.min(Math.max(width * 0.55, 1.4), width - 0.4, 4.5)
-  const plaqueH = 0.32
-
   return (
-    <group position={[0, topY + 0.28, 0.72]}>
+    <group position={[0, topY + 0.48, 0.72]}>
       <mesh castShadow receiveShadow>
-        <boxGeometry args={[plaqueW + 0.08, plaqueH + 0.06, 0.08]} />
+        <boxGeometry args={[plaqueW + 0.1, plaqueH + 0.08, 0.1]} />
         <meshStandardMaterial color={selected ? '#5a4278' : '#4a3220'} roughness={0.7} />
       </mesh>
-      <mesh position={[0, 0, 0.045]} castShadow>
+      <mesh position={[0, 0, 0.055]} castShadow>
         <planeGeometry args={[plaqueW, plaqueH]} />
         <meshStandardMaterial
           map={texture}

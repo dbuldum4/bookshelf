@@ -5,7 +5,7 @@ import { isLookLocked, resetLookLock } from './lookLock'
 
 /** First-person walk / look modes (WASD + Space jump + one-finger / left-drag look). Rotate is a separate auto-orbit. */
 const WALK_MODES = new Set(['fixed', 'play'])
-const EYE_HEIGHT = 3.85
+const EYE_HEIGHT = 4.15
 const MOVE_SPEED = 6.5
 const JUMP_VELOCITY = 7.5
 const GRAVITY = 20
