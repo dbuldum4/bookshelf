@@ -1,6 +1,7 @@
 const STORAGE_KEY = 'bookshelf-library-v3'
 const LEGACY_STORAGE_KEY_V2 = 'bookshelf-library-v2'
 const LEGACY_STORAGE_KEY_V1 = 'bookshelf-library-v1'
+export const ONBOARDING_STORAGE_KEY = 'bookshelf-onboarded'
 
 export const READING_STATUSES = ['Want to Read', 'Reading', 'Finished']
 
@@ -290,6 +291,33 @@ export function createLibraryState() {
   }
 }
 
+/** New visitor default: no books, one Library shelf. Not written until they choose. */
+export function createEmptyLibraryState() {
+  return {
+    books: [],
+    shelves: [createDefaultShelf()],
+  }
+}
+
+function starterTitleById() {
+  return new Map(createLibrary().map((book) => [book.id, book.title]))
+}
+
+/** Drop starter-catalog books that still have their original id and title. */
+export function removeDemoBooks(state) {
+  const starters = starterTitleById()
+  const currentBooks = Array.isArray(state?.books) ? state.books : []
+  const books = currentBooks.filter((book) => starters.get(book.id) !== book.title)
+  const shelves = Array.isArray(state?.shelves) && state.shelves.length
+    ? state.shelves
+    : [createDefaultShelf()]
+  return {
+    books,
+    shelves,
+    removed: currentBooks.length - books.length,
+  }
+}
+
 export function createBook(draft, index, defaultShelfId = DEFAULT_SHELF_ID) {
   return normalizeBook({
     ...draft,
@@ -437,7 +465,8 @@ function finalizeLoadedState(state) {
 
 export function loadLibraryState() {
   const fallback = createLibraryState()
-  if (typeof window === 'undefined') return fallback
+  const empty = createEmptyLibraryState()
+  if (typeof window === 'undefined') return empty
 
   let rawV3 = null
   try {
@@ -470,7 +499,7 @@ export function loadLibraryState() {
   }
 
   const v1 = readStoredJson(LEGACY_STORAGE_KEY_V1)
-  if (!Array.isArray(v1)) return fallback
+  if (!Array.isArray(v1)) return empty
 
   const legacyById = new Map(
     v1
@@ -483,6 +512,50 @@ export function loadLibraryState() {
     shelfId: DEFAULT_SHELF_ID,
   }, index))
   return finalizeLoadedState({ books, shelves: [createDefaultShelf()] })
+}
+
+function storageGet(key) {
+  try {
+    return window.localStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+
+export function hasStoredLibrary() {
+  if (typeof window === 'undefined') return false
+  return storageGet(STORAGE_KEY) != null
+    || storageGet(LEGACY_STORAGE_KEY_V2) != null
+    || storageGet(LEGACY_STORAGE_KEY_V1) != null
+}
+
+export function isLibraryOnboarded() {
+  if (typeof window === 'undefined') return false
+  return storageGet(ONBOARDING_STORAGE_KEY) === 'true'
+}
+
+export function markLibraryOnboarded() {
+  if (typeof window === 'undefined') return false
+  try {
+    window.localStorage.setItem(ONBOARDING_STORAGE_KEY, 'true')
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** True when this visit has no prior library and the user has not chosen yet. */
+export function needsLibraryOnboarding() {
+  if (typeof window === 'undefined') return false
+  try {
+    if (window.localStorage.getItem(ONBOARDING_STORAGE_KEY) === 'true') return false
+    if (window.localStorage.getItem(STORAGE_KEY) != null) return false
+    if (window.localStorage.getItem(LEGACY_STORAGE_KEY_V2) != null) return false
+    if (window.localStorage.getItem(LEGACY_STORAGE_KEY_V1) != null) return false
+    return true
+  } catch {
+    return false
+  }
 }
 
 /** @deprecated Prefer loadLibraryState — returns books only for older callers. */

@@ -3,6 +3,7 @@ import { Canvas, useThree } from '@react-three/fiber'
 import BookDetails from './components/BookDetails'
 import Controls from './components/Controls'
 import ErrorBoundary from './components/ErrorBoundary'
+import FirstRun from './components/FirstRun'
 import LibraryPanel from './components/LibraryPanel'
 import NormalMode from './normal-mode/NormalMode'
 import SettingsPanel from './components/SettingsPanel'
@@ -25,6 +26,8 @@ import {
   booksOnShelf,
   bookWorldFocusPosition,
   createBook,
+  createEmptyLibraryState,
+  createLibraryState,
   createShelf,
   DEFAULT_SHELF_ID,
   deleteEmptyShelf,
@@ -32,7 +35,10 @@ import {
   downloadLibraryExport,
   ensureLibraryCapacity,
   loadLibraryState,
+  markLibraryOnboarded,
   mergeLibraryStates,
+  needsLibraryOnboarding,
+  removeDemoBooks,
   saveLibraryState,
   shouldRemindLibraryBackup,
   tryReorderBookOnShelf,
@@ -158,6 +164,7 @@ export default function App() {
     initialLibraryRef.current = {
       libraryState: state,
       selectedShelfId: state.shelves[0]?.id || DEFAULT_SHELF_ID,
+      needsOnboarding: needsLibraryOnboarding(),
     }
   }
 
@@ -175,6 +182,7 @@ export default function App() {
     () => storedMotionPreference != null
   )
   const [libraryState, setLibraryState] = useState(() => initialLibraryRef.current.libraryState)
+  const [onboarding, setOnboarding] = useState(() => initialLibraryRef.current.needsOnboarding)
   const [selectedBookId, setSelectedBookId] = useState(null)
   const [selectedShelfId, setSelectedShelfId] = useState(
     () => initialLibraryRef.current.selectedShelfId
@@ -195,10 +203,11 @@ export default function App() {
   )
 
   useEffect(() => {
+    if (onboarding) return
     if (!saveLibraryState(libraryState)) {
       setStatusMessage('Could not save library to this browser. Storage may be full or disabled.')
     }
-  }, [libraryState])
+  }, [libraryState, onboarding])
 
   useEffect(() => {
     setBackupReminder(shouldRemindLibraryBackup({ bookCount: libraryState.books.length }))
@@ -448,10 +457,34 @@ export default function App() {
         ? shelves
         : [{ id: DEFAULT_SHELF_ID, name: 'Library', x: 0, z: 0, yaw: 0, width: 7.6, rows: 4 }]
     const fitted = ensureLibraryCapacity({ books, shelves: nextShelves })
-    setLibraryState({ books: fitted.books, shelves: fitted.shelves })
+    const state = { books: fitted.books, shelves: fitted.shelves }
+    setLibraryState(state)
     setSelectedBookId(null)
     setSelectedShelfId(fitted.shelves[0]?.id || DEFAULT_SHELF_ID)
     if (fitted.message) flashStatus(fitted.message)
+    return state
+  }
+
+  const finishOnboarding = (next) => {
+    const state = replaceLibrary(next)
+    markLibraryOnboarded()
+    saveLibraryState(state)
+    setOnboarding(false)
+  }
+
+  const handleRemoveDemoBooks = () => {
+    let removed = 0
+    setLibraryState((state) => {
+      const result = removeDemoBooks(state)
+      removed = result.removed
+      return { books: result.books, shelves: result.shelves }
+    })
+    flashStatus(
+      removed
+        ? `Removed ${removed} demo book${removed === 1 ? '' : 's'}.`
+        : 'No demo books to remove.',
+    )
+    return removed
   }
 
   const mergeLibrary = (next) => {
@@ -700,6 +733,7 @@ export default function App() {
           onApplyRoomPreset={handleApplyRoomPreset}
           onExport={handleBackupExport}
           onToggle3D={() => setViewMode('3d')}
+          onRemoveDemoBooks={handleRemoveDemoBooks}
           onStatus={flashStatus}
           reducedMotion={reducedMotion}
           setReducedMotion={setReducedMotionPreference}
@@ -826,9 +860,19 @@ export default function App() {
             setGraphicsQuality={setGraphicsQuality}
             reducedMotion={reducedMotion}
             setReducedMotion={setReducedMotionPreference}
+            onRemoveDemoBooks={handleRemoveDemoBooks}
           />
         </>
       )}
+      {onboarding && (
+        <FirstRun
+          onBrowseDemo={() => finishOnboarding(createLibraryState())}
+          onStartEmpty={() => finishOnboarding(createEmptyLibraryState())}
+          onImport={finishOnboarding}
+          onStatus={flashStatus}
+        />
+      )}
+
       {is3D && (
         <>
           <LibraryPanel

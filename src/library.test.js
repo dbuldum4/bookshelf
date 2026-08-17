@@ -13,6 +13,7 @@ import {
   computeLibraryStats,
   computeYearInReview,
   createDefaultShelf,
+  createEmptyLibraryState,
   createLibrary,
   createLibraryState,
   createShelf,
@@ -24,6 +25,10 @@ import {
   loadLibraryState,
   loadReadingGoals,
   markLibraryBackupDone,
+  markLibraryOnboarded,
+  needsLibraryOnboarding,
+  ONBOARDING_STORAGE_KEY,
+  removeDemoBooks,
   normalizeReadingGoals,
   mergeBookRecords,
   mergeLibraryStates,
@@ -171,6 +176,73 @@ describe('library persistence', () => {
     expect(loaded.books).toHaveLength(1)
     expect(loaded.books[0].title).toBe('B')
     expect(loaded.shelves.map((shelf) => shelf.id)).toEqual([DEFAULT_SHELF_ID, 'fiction'])
+  })
+
+  it('loads an empty library when storage is missing and does not persist', () => {
+    const loaded = loadLibraryState()
+    expect(loaded.books).toEqual([])
+    expect(loaded.shelves).toEqual([expect.objectContaining({ id: DEFAULT_SHELF_ID, name: 'Library' })])
+    expect(storage.setItem).not.toHaveBeenCalled()
+  })
+
+  it('still loads a saved v3 library', () => {
+    storage.values.set('bookshelf-library-v3', JSON.stringify({
+      books: [{ id: 'kept', title: 'Kept Book', author: 'Author' }],
+      shelves: [createDefaultShelf()],
+    }))
+
+    const loaded = loadLibraryState()
+    expect(loaded.books).toEqual([
+      expect.objectContaining({ id: 'kept', title: 'Kept Book' }),
+    ])
+    expect(loaded.books).toHaveLength(1)
+  })
+
+  it('choosing the demo library persists the starter books', () => {
+    expect(saveLibraryState(createLibraryState())).toBe(true)
+    markLibraryOnboarded()
+
+    const loaded = loadLibraryState()
+    expect(loaded.books).toHaveLength(createLibrary().length)
+    expect(storage.values.get(ONBOARDING_STORAGE_KEY)).toBe('true')
+    expect(needsLibraryOnboarding()).toBe(false)
+  })
+
+  it('choosing empty persists zero books', () => {
+    expect(saveLibraryState(createEmptyLibraryState())).toBe(true)
+    markLibraryOnboarded()
+
+    const loaded = loadLibraryState()
+    expect(loaded.books).toHaveLength(0)
+    expect(loaded.shelves[0]).toEqual(expect.objectContaining({ id: DEFAULT_SHELF_ID, name: 'Library' }))
+    expect(needsLibraryOnboarding()).toBe(false)
+  })
+
+  it('does not send onboarded users down the first-run path', () => {
+    expect(needsLibraryOnboarding()).toBe(true)
+    storage.values.set(ONBOARDING_STORAGE_KEY, 'true')
+    expect(needsLibraryOnboarding()).toBe(false)
+  })
+
+  it('does not show first-run when a prior library key exists', () => {
+    storage.values.set('bookshelf-library-v3', JSON.stringify({
+      books: [{ id: 'custom', title: 'Custom' }],
+      shelves: [createDefaultShelf()],
+    }))
+    expect(needsLibraryOnboarding()).toBe(false)
+  })
+
+  it('removes only starter books that still match the original titles', () => {
+    const demo = createLibraryState()
+    const renamed = { ...demo.books[0], title: 'My Annotated Gatsby' }
+    const extra = { id: 'mine', title: 'My Book', author: 'Me', shelfId: DEFAULT_SHELF_ID }
+    const result = removeDemoBooks({
+      books: [renamed, demo.books[1], extra],
+      shelves: demo.shelves,
+    })
+
+    expect(result.removed).toBe(1)
+    expect(result.books.map((book) => book.id)).toEqual([renamed.id, 'mine'])
   })
 })
 

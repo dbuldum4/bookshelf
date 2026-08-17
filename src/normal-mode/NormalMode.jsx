@@ -36,6 +36,7 @@ function NormalMode({
   onApplyRoomPreset,
   onExport,
   onToggle3D,
+  onRemoveDemoBooks,
   onStatus,
   reducedMotion,
   setReducedMotion,
@@ -170,6 +171,7 @@ function NormalMode({
                 setGraphicsQuality={setGraphicsQuality}
                 galaxyMode={galaxyMode}
                 setGalaxyMode={setGalaxyMode}
+                onRemoveDemoBooks={onRemoveDemoBooks}
                 onStatus={onStatus}
               />
             </TabsContent>

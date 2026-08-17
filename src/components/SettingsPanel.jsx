@@ -98,6 +98,7 @@ function SettingsPanel({
   setGraphicsQuality,
   reducedMotion,
   setReducedMotion,
+  onRemoveDemoBooks,
 }) {
   const [open, setOpen] = useState(false)
   const panelId = useId()
@@ -279,6 +280,26 @@ function SettingsPanel({
             </div>
             <p style={{ margin: '8px 0 0', color: 'rgba(255,255,255,0.45)', fontSize: 11, lineHeight: 1.4 }}>
               Graphics quality, galaxy style, and motion preference are saved in this browser.
+            </p>
+          </section>
+
+          <section>
+            <h3 style={sectionLabel}>Library</h3>
+            <button
+              type="button"
+              onClick={() => onRemoveDemoBooks?.()}
+              style={{
+                ...chipStyle(false, reducedMotion),
+                width: '100%',
+                border: '1px solid rgba(255,255,255,0.12)',
+                background: 'rgba(255,255,255,0.08)',
+                color: '#fff',
+              }}
+            >
+              Remove demo books
+            </button>
+            <p style={{ margin: '8px 0 0', color: 'rgba(255,255,255,0.45)', fontSize: 11, lineHeight: 1.4 }}>
+              Deletes starter catalog books that still use their original titles.
             </p>
           </section>
         </div>

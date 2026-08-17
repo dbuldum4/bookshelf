@@ -16,6 +16,7 @@ function SettingsView({
   setGraphicsQuality,
   galaxyMode,
   setGalaxyMode,
+  onRemoveDemoBooks,
   onStatus,
 }) {
   return (
@@ -74,6 +75,18 @@ function SettingsView({
             <option value="realistic">Realistic</option>
             <option value="pixelated">Pixelated</option>
           </Select>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Library</CardTitle>
+          <CardDescription>Remove starter catalog books that still use their original titles.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button variant="outline" onClick={() => onRemoveDemoBooks?.()}>
+            Remove demo books
+          </Button>
         </CardContent>
       </Card>
     </div>
