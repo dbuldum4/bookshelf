@@ -19,6 +19,7 @@ import {
 } from './graphicsQuality'
 import {
   appendFinishedRead,
+  appendOpenRead,
   applyRoomPreset,
   applyShelfTransform,
   assignBookToShelf,
@@ -864,15 +865,10 @@ const MAX_UNKNOWN_PAGE = 100_000
 
 function applyBookFieldUpdates(book, updates) {
   const next = { ...book, ...updates }
-  if (updates.status === 'Reading' && !book.startedAt) next.startedAt = today()
   if (updates.status === 'Finished') {
     next.reads = appendFinishedRead({ ...book, ...next }, today())
-  } else if (updates.status === 'Reading' && next.startedAt) {
-    const reads = Array.isArray(next.reads) ? next.reads : []
-    const hasOpen = reads.some((read) => read && !read.finishedAt)
-    if (!hasOpen && !reads.some((read) => read && (read.startedAt || read.finishedAt))) {
-      next.reads = [...reads, { startedAt: next.startedAt, finishedAt: '' }]
-    }
+  } else if (updates.status === 'Reading') {
+    next.reads = appendOpenRead({ ...book, ...next }, today())
   }
   if (Array.isArray(next.reads)) {
     const meaningful = next.reads.filter((read) => read && (read.startedAt || read.finishedAt))

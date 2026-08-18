@@ -8,6 +8,7 @@ import { Sheet, SheetDescription, SheetHeader, SheetTitle } from '@/components/u
 import { Textarea } from '@/components/ui/textarea'
 import {
   appendFinishedRead,
+  appendOpenRead,
   deriveReadBounds,
   lookupBookByIsbn,
   READING_STATUSES,
@@ -121,9 +122,10 @@ function BookSheet({
     setDraft((current) => {
       if (field !== 'status') return { ...current, [field]: value }
       const next = { ...current, status: value }
-      if (value === 'Reading' && !current.startedAt) next.startedAt = today()
-      if (value === 'Finished') {
-        const reads = appendFinishedRead(current, today())
+      if (value === 'Finished' || value === 'Reading') {
+        const reads = value === 'Finished'
+          ? appendFinishedRead(current, today())
+          : appendOpenRead(current, today())
         const bounds = deriveReadBounds(reads)
         next.reads = reads
         next.startedAt = bounds.startedAt

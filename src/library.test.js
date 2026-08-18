@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   addEmptyShelf,
   appendFinishedRead,
+  appendOpenRead,
   applyRoomPreset,
   applyShelfTransform,
   booksFitOnShelf,
@@ -14,6 +15,7 @@ import {
   computeGoalProgress,
   computeLibraryStats,
   computeYearInReview,
+  createBook,
   createDefaultShelf,
   createLibrary,
   createLibraryState,
@@ -789,6 +791,34 @@ describe('rereads', () => {
     }, '2026-08-17')).toEqual([
       { startedAt: '2025-01-01', finishedAt: '2025-03-01' },
       { startedAt: '', finishedAt: '2026-08-17' },
+    ])
+  })
+
+  it('creates a read when adding a book as Reading', () => {
+    expect(appendOpenRead({ reads: [], startedAt: '' }, '2026-08-17')).toEqual([
+      { startedAt: '2026-08-17', finishedAt: '' },
+    ])
+
+    const book = createBook({ title: 'Dune', author: 'Frank Herbert', status: 'Reading' }, 0)
+    expect(book.reads).toHaveLength(1)
+    expect(book.reads[0].startedAt).toMatch(/^\d{4}-\d{2}-\d{2}/)
+    expect(book.reads[0].finishedAt).toBe('')
+    expect(book.startedAt).toBe(book.reads[0].startedAt)
+    expect(book.finishedAt).toBe('')
+  })
+
+  it('appends an open read when switching Finished to Reading', () => {
+    expect(appendOpenRead({
+      status: 'Finished',
+      reads: [{ startedAt: '2025-01-01', finishedAt: '2025-03-01' }],
+    }, '2026-08-17')).toEqual([
+      { startedAt: '2025-01-01', finishedAt: '2025-03-01' },
+      { startedAt: '2026-08-17', finishedAt: '' },
+    ])
+    expect(appendOpenRead({
+      reads: [{ startedAt: '2026-08-01', finishedAt: '' }],
+    }, '2026-08-17')).toEqual([
+      { startedAt: '2026-08-01', finishedAt: '' },
     ])
   })
 })

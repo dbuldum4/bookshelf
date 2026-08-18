@@ -258,6 +258,19 @@ export function appendFinishedRead(book, today) {
   return sortReads([...reads, { startedAt: '', finishedAt: today }]).slice(0, MAX_READS)
 }
 
+function localCalendarToday() {
+  const date = new Date()
+  const offset = date.getTimezoneOffset() * 60_000
+  return new Date(date.getTime() - offset).toISOString().slice(0, 10)
+}
+
+/** Open a new in-progress read unless one already exists. */
+export function appendOpenRead(book, today) {
+  const reads = readThroughsOf(book)
+  if (reads.some((read) => !read.finishedAt)) return reads
+  return sortReads([...reads, { startedAt: today, finishedAt: '' }]).slice(0, MAX_READS)
+}
+
 function isValidColor(color) {
   if (typeof color !== 'string' || !color.trim()) return false
   const trimmed = color.trim()
@@ -418,11 +431,17 @@ export function createLibraryState() {
 }
 
 export function createBook(draft, index, defaultShelfId = DEFAULT_SHELF_ID) {
+  const status = draft.status || 'Want to Read'
+  // Date fields bind to reads, so a Reading add must start with a read-through.
+  const reads = status === 'Reading'
+    ? appendOpenRead(draft, localCalendarToday())
+    : draft.reads
   return normalizeBook({
     ...draft,
+    reads,
     id: makeId(draft.title, index),
     color: COLORS[index % COLORS.length],
-    status: draft.status || 'Want to Read',
+    status,
     shelfId: draft.shelfId || defaultShelfId,
   }, index, defaultShelfId)
 }
