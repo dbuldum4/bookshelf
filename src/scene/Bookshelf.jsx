@@ -9,6 +9,7 @@ import {
   shelfRowYs,
 } from '../library'
 import { lockLook, unlockLook } from './lookLock'
+import { spineStatusRibbonColor } from './spineStatus'
 
 function makeCaseLabelTexture(name, selected = false, aspect = 4) {
   const canvas = document.createElement('canvas')
@@ -144,7 +145,7 @@ function shade(hex, amt) {
   return '#' + c.getHexString()
 }
 
-function makeSpineTexture({ color, title, author, titleColor, coverImage = null }) {
+function makeSpineTexture({ color, title, author, titleColor, coverImage = null, status }) {
   const c = document.createElement('canvas')
   c.width = 128
   c.height = 256
@@ -174,6 +175,13 @@ function makeSpineTexture({ color, title, author, titleColor, coverImage = null 
   ctx.fillStyle = coverImage ? 'rgba(0,0,0,0.45)' : shade(color, -0.45)
   ctx.fillRect(0, 0, 128, 10)
   ctx.fillRect(0, 246, 128, 10)
+
+  // Status ribbon on the top edge so title/author/cover stay readable.
+  const ribbonH = 8
+  ctx.fillStyle = spineStatusRibbonColor(status)
+  ctx.fillRect(0, 0, 128, ribbonH)
+  ctx.fillStyle = 'rgba(0,0,0,0.28)'
+  ctx.fillRect(0, ribbonH, 128, 1)
 
   ctx.strokeStyle = coverImage ? 'rgba(255,255,255,0.45)' : shade(color, 0.4)
   ctx.lineWidth = 1.5
@@ -297,12 +305,12 @@ function useCoverImage(coverUrl) {
 }
 
 function BookMesh({ book }) {
-  const { author, color, title, titleColor, coverUrl, width, height, depth } = book
+  const { author, color, title, titleColor, coverUrl, width, height, depth, status } = book
   const coverImage = useCoverImage(coverUrl)
 
   const spineTexture = useMemo(
-    () => makeSpineTexture({ author, color, title, titleColor, coverImage }),
-    [author, color, title, titleColor, coverImage]
+    () => makeSpineTexture({ author, color, title, titleColor, coverImage, status }),
+    [author, color, title, titleColor, coverImage, status]
   )
   const coverFaceTexture = useMemo(
     () => makeCoverFaceTexture({ color, coverImage }),
