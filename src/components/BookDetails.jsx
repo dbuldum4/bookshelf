@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { READING_STATUSES } from '../library'
+import { COLORS, READING_STATUSES, toColorInputValue } from '../library'
 
 const fontFamily =
   '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif'
@@ -126,6 +126,51 @@ function BookDetails({ book, shelves = [], onUpdate, onDelete, onClose, onReorde
             onBlur={(event) => onUpdate({ author: event.target.value.trim() })}
             style={{ ...fieldStyle, height: 40, padding: '0 11px' }}
           />
+        </div>
+        <div>
+          <label htmlFor="book-color" style={labelStyle}>Spine color</label>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <input
+              id="book-color"
+              type="color"
+              value={toColorInputValue(book.color)}
+              onChange={(event) => onUpdate({ color: event.target.value })}
+              aria-label="Spine color"
+              style={{
+                width: 42,
+                height: 32,
+                padding: 0,
+                border: '1px solid rgba(255,255,255,0.13)',
+                borderRadius: 8,
+                background: 'transparent',
+                cursor: 'pointer',
+              }}
+            />
+            <div role="group" aria-label="Spine color swatches" style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {COLORS.map((color) => {
+                const selected = toColorInputValue(book.color).toLowerCase() === color.toLowerCase()
+                return (
+                  <button
+                    key={color}
+                    type="button"
+                    aria-label={`Set spine color ${color}`}
+                    aria-pressed={selected}
+                    onClick={() => onUpdate({ color })}
+                    style={{
+                      width: 22,
+                      height: 22,
+                      padding: 0,
+                      borderRadius: 6,
+                      background: color,
+                      border: selected ? '2px solid #fff' : '1px solid rgba(255,255,255,0.22)',
+                      boxShadow: selected ? `0 0 0 1px ${color}` : 'none',
+                      cursor: 'pointer',
+                    }}
+                  />
+                )
+              })}
+            </div>
+          </div>
         </div>
         <div>
           <label htmlFor="book-status" style={labelStyle}>Reading status</label>

@@ -7,9 +7,11 @@ import { Select } from '@/components/ui/select'
 import { Sheet, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Textarea } from '@/components/ui/textarea'
 import {
+  COLORS,
   lookupBookByIsbn,
   READING_STATUSES,
   searchAcclaimedBooks,
+  toColorInputValue,
 } from '../library'
 
 function today() {
@@ -43,6 +45,7 @@ function BookSheet({
     finishedAt: '',
     tags: '',
     notes: '',
+    color: '',
   })
   const [tagsDraft, setTagsDraft] = useState('')
   const [lookupError, setLookupError] = useState('')
@@ -74,6 +77,7 @@ function BookSheet({
         finishedAt: book.finishedAt || '',
         tags: (book.tags || []).join(', '),
         notes: book.notes || '',
+        color: book.color || '',
       })
       setTagsDraft((book.tags || []).join(', '))
     } else {
@@ -91,6 +95,7 @@ function BookSheet({
         finishedAt: '',
         tags: '',
         notes: '',
+        color: '',
       })
       setTagsDraft('')
     }
@@ -357,6 +362,41 @@ function BookSheet({
             onBlur={(e) => handleChange('author', e.target.value.trim())}
             placeholder="Author"
           />
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="book-color">Spine color</Label>
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              id="book-color"
+              type="color"
+              value={toColorInputValue(draft.color)}
+              onChange={(e) => handleChange('color', e.target.value)}
+              aria-label="Spine color"
+              className="h-9 w-10 cursor-pointer rounded-md border border-input bg-transparent p-0.5"
+            />
+            <div role="group" aria-label="Spine color swatches" className="flex flex-wrap gap-1.5">
+              {COLORS.map((color) => {
+                const selected = Boolean(draft.color)
+                  && toColorInputValue(draft.color).toLowerCase() === color.toLowerCase()
+                return (
+                  <button
+                    key={color}
+                    type="button"
+                    aria-label={`Set spine color ${color}`}
+                    aria-pressed={selected}
+                    onClick={() => handleChange('color', color)}
+                    className="h-6 w-6 rounded-md border p-0"
+                    style={{
+                      background: color,
+                      borderColor: selected ? 'hsl(var(--foreground))' : 'hsl(var(--border))',
+                      boxShadow: selected ? `0 0 0 1px ${color}` : undefined,
+                    }}
+                  />
+                )
+              })}
+            </div>
+          </div>
         </div>
 
         <div className="grid grid-cols-2 gap-4">

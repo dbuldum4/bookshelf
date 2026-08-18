@@ -11,7 +11,9 @@ import {
   clampShelvesToRoom,
   computeGoalProgress,
   computeLibraryStats,
+  COLORS,
   computeYearInReview,
+  createBook,
   createDefaultShelf,
   createLibrary,
   createLibraryState,
@@ -45,6 +47,7 @@ import {
   shelfRowYs,
   shouldRemindLibraryBackup,
   sortLibrary,
+  toColorInputValue,
   tryReorderBookOnShelf,
   tryReorderBookToIndex,
 } from './library'
@@ -218,6 +221,62 @@ describe('normalize and sanitize', () => {
       },
     ]))
     expect(result.books[0].coverUrl).toBe('')
+  })
+})
+
+describe('spine colors', () => {
+  let storage
+
+  beforeEach(() => {
+    storage = makeStorage()
+    vi.stubGlobal('window', { localStorage: storage })
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('exports a palette of hex spine colors', () => {
+    expect(COLORS.length).toBeGreaterThan(0)
+    for (const color of COLORS) {
+      expect(color).toMatch(/^#[0-9a-fA-F]{6}$/)
+    }
+  })
+
+  it('maps stored colors onto #rrggbb for the color input', () => {
+    expect(toColorInputValue('#abc')).toBe('#aabbcc')
+    expect(toColorInputValue('#112233')).toBe('#112233')
+    expect(toColorInputValue('#11223344')).toBe('#112233')
+    expect(toColorInputValue('')).toBe(COLORS[0])
+    expect(toColorInputValue('not-a-color')).toBe(COLORS[0])
+  })
+
+  it('preserves a custom color through normalize and save/load', () => {
+    const state = normalizeLibraryState({
+      books: [{ id: 'c1', title: 'C', author: 'A', color: '#112233' }],
+      shelves: [createDefaultShelf()],
+    })
+    expect(state.books[0].color).toBe('#112233')
+    expect(saveLibraryState(state)).toBe(true)
+    expect(loadLibraryState().books[0].color).toBe('#112233')
+  })
+
+  it('falls back to the palette when color is invalid', () => {
+    const state = normalizeLibraryState({
+      books: [{ id: 'c2', title: 'C', author: 'A', color: '###' }],
+      shelves: [createDefaultShelf()],
+    })
+    expect(COLORS).toContain(state.books[0].color)
+  })
+
+  it('lets createBook keep a draft color', () => {
+    const book = createBook({ title: 'New', author: 'A', color: '#abcdef' }, 0)
+    expect(book.color).toBe('#abcdef')
+  })
+
+  it('assigns a palette color when createBook has no draft color', () => {
+    const book = createBook({ title: 'New', author: 'A' }, 3)
+    expect(book.color).toBe(COLORS[3 % COLORS.length])
   })
 })
 

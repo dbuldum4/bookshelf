@@ -64,11 +64,23 @@ const BOOKS = [
   ['the-shadow-of-the-wind', 'The Shadow of the Wind', 'Carlos Ruiz Zafón'],
 ]
 
-const COLORS = [
+export const COLORS = [
   '#b3303a', '#2d5a8a', '#2e7d52', '#c98a2b', '#6a3d8a',
   '#8a2b3c', '#1f4d6b', '#5a7a2b', '#a83a2b', '#3a4a8a',
   '#7a5a2b', '#2b6a6a',
 ]
+
+/** Native <input type="color"> only accepts #rrggbb. */
+export function toColorInputValue(color) {
+  if (typeof color !== 'string') return COLORS[0]
+  const trimmed = color.trim()
+  if (/^#[0-9a-fA-F]{6}$/.test(trimmed)) return trimmed
+  if (/^#[0-9a-fA-F]{8}$/.test(trimmed)) return trimmed.slice(0, 7)
+  if (/^#[0-9a-fA-F]{3}$/.test(trimmed)) {
+    return `#${trimmed[1]}${trimmed[1]}${trimmed[2]}${trimmed[2]}${trimmed[3]}${trimmed[3]}`
+  }
+  return COLORS[0]
+}
 
 function defaultStatus(index) {
   if (index % 9 === 0) return 'Reading'
@@ -294,7 +306,7 @@ export function createBook(draft, index, defaultShelfId = DEFAULT_SHELF_ID) {
   return normalizeBook({
     ...draft,
     id: makeId(draft.title, index),
-    color: COLORS[index % COLORS.length],
+    color: draft.color || COLORS[index % COLORS.length],
     status: draft.status || 'Want to Read',
     shelfId: draft.shelfId || defaultShelfId,
   }, index, defaultShelfId)
