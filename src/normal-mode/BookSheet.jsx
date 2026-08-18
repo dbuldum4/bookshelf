@@ -108,24 +108,28 @@ function BookSheet({
   }, [isAdding, open])
 
   const handleChange = (field, value) => {
-    setDraft((current) => ({ ...current, [field]: value }))
     if (!isAdding && book) {
-      if (field === 'tags') return
+      if (field === 'tags') {
+        setDraft((current) => ({ ...current, [field]: value }))
+        return
+      }
+      let updates
       if (field === 'currentPage' || field === 'pageCount') {
-        onUpdateBook({ [field]: value })
+        updates = { [field]: value }
       } else if (field === 'rating') {
-        onUpdateBook({ rating: Number(value) })
+        updates = { rating: Number(value) }
       } else if (field === 'status') {
-        const updates = { status: value }
+        updates = { status: value }
         if (value === 'Reading' && !draft.startedAt) updates.startedAt = today()
         if (value === 'Finished' && !draft.finishedAt) updates.finishedAt = today()
-        onUpdateBook(updates)
       } else if (field === 'shelfId') {
-        onUpdateBook({ shelfId: value })
+        updates = { shelfId: value }
       } else {
-        onUpdateBook({ [field]: value })
+        updates = { [field]: value }
       }
+      if (onUpdateBook(updates) === false) return
     }
+    setDraft((current) => ({ ...current, [field]: value }))
   }
 
   const handleTagsBlur = () => {
@@ -223,14 +227,20 @@ function BookSheet({
     try {
       const result = await lookupBookByIsbn(draft.isbn)
       if (requestId !== isbnRequestId.current) return
+      let appliedPageCount = true
+      if (!isAdding && book) {
+        appliedPageCount = onUpdateBook({ ...result }) !== false
+        if (!appliedPageCount) {
+          const { pageCount: _pageCount, ...rest } = result
+          onUpdateBook(rest)
+        }
+      }
       setDraft((current) => ({
         ...current,
         ...result,
+        pageCount: appliedPageCount ? result.pageCount : current.pageCount,
         shelfId: current.shelfId || shelves[0]?.id,
       }))
-      if (!isAdding && book) {
-        onUpdateBook({ ...result })
-      }
     } catch (error) {
       if (requestId !== isbnRequestId.current) return
       setLookupError(error instanceof Error ? error.message : 'Could not look up that ISBN.')

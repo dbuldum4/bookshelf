@@ -20,7 +20,6 @@ import {
 import {
   applyRoomPreset,
   applyShelfTransform,
-  assignBookToShelf,
   booksFitOnShelf,
   booksOnShelf,
   bookWorldFocusPosition,
@@ -34,9 +33,11 @@ import {
   loadLibraryState,
   mergeLibraryStates,
   saveLibraryState,
+  SHELF_FULL_REASON,
   shouldRemindLibraryBackup,
   tryReorderBookOnShelf,
   tryReorderBookToIndex,
+  tryUpdateBookOnShelf,
 } from './library'
 import Scene from './scene/Scene'
 import { isWebGLAvailable } from './webgl'
@@ -48,12 +49,6 @@ const BOOK_NAV_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'Home', 'End'])
 function prefersReducedMotion() {
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false
   return window.matchMedia(REDUCED_MOTION_QUERY).matches
-}
-
-function today() {
-  const date = new Date()
-  const offset = date.getTimezoneOffset() * 60_000
-  return new Date(date.getTime() - offset).toISOString().slice(0, 10)
 }
 
 /** True when focus is in a text field, select, or contenteditable. */
@@ -355,44 +350,18 @@ export default function App() {
   }, [selectedBookId])
 
   const updateSelectedBook = (updates) => {
-    if (updates.shelfId && updates.shelfId !== selectedBook?.shelfId) {
-      const target = shelves.find((shelf) => shelf.id === updates.shelfId)
-      if (!target) return
-      const capacity = assignBookToShelf(library, selectedBookId, updates.shelfId, target)
-      if (!capacity.ok) {
-        flashStatus(capacity.reason)
-        return
-      }
-      const { shelfId: _shelfId, ...rest } = updates
-      let assignFailed = null
-      setLibraryState((state) => {
-        const liveTarget = state.shelves.find((shelf) => shelf.id === updates.shelfId)
-        if (!liveTarget) {
-          assignFailed = 'That shelf is no longer available.'
-          return state
-        }
-        const result = assignBookToShelf(state.books, selectedBookId, updates.shelfId, liveTarget)
-        if (!result.ok) {
-          assignFailed = result.reason
-          return state
-        }
-        const books = result.books.map((book) => {
-          if (book.id !== selectedBookId) return book
-          return applyBookFieldUpdates(book, rest)
-        })
-        return { ...state, books }
-      })
-      if (assignFailed) flashStatus(assignFailed)
-      return
+    if (!selectedBookId) return false
+    const preview = tryUpdateBookOnShelf(library, shelves, selectedBookId, updates)
+    if (!preview.ok) {
+      flashStatus(preview.reason)
+      return false
     }
-
-    setLibraryState((state) => ({
-      ...state,
-      books: state.books.map((book) => {
-        if (book.id !== selectedBookId) return book
-        return applyBookFieldUpdates(book, updates)
-      }),
-    }))
+    setLibraryState((state) => {
+      const result = tryUpdateBookOnShelf(state.books, state.shelves, selectedBookId, updates)
+      if (!result.ok) return state
+      return { ...state, books: result.books }
+    })
+    return true
   }
 
   const addBook = (draft) => {
@@ -408,7 +377,7 @@ export default function App() {
     const provisional = createBook({ ...draft, shelfId }, library.length, shelfId)
     const onShelf = [...booksOnShelf(library, shelfId), provisional]
     if (shelf && !booksFitOnShelf(onShelf, shelf)) {
-      flashStatus('That shelf is full. Free space, pick another shelf, or resize it in Arrange mode.')
+      flashStatus(SHELF_FULL_REASON)
       return false
     }
 
@@ -856,28 +825,6 @@ export default function App() {
       )}
     </div>
   )
-}
-
-const MAX_UNKNOWN_PAGE = 100_000
-
-function applyBookFieldUpdates(book, updates) {
-  const next = { ...book, ...updates }
-  if (updates.status === 'Reading' && !book.startedAt) next.startedAt = today()
-  if (updates.status === 'Finished' && !book.finishedAt) next.finishedAt = today()
-  if (updates.pageCount !== undefined) {
-    next.pageCount = Math.max(0, Number(updates.pageCount) || 0)
-    const currentPage = Math.max(0, Number(next.currentPage) || 0)
-    next.currentPage = next.pageCount
-      ? Math.min(currentPage, next.pageCount)
-      : Math.min(currentPage, MAX_UNKNOWN_PAGE)
-  }
-  if (updates.currentPage !== undefined) {
-    const currentPage = Math.max(0, Number(updates.currentPage) || 0)
-    next.currentPage = next.pageCount
-      ? Math.min(currentPage, next.pageCount)
-      : Math.min(currentPage, MAX_UNKNOWN_PAGE)
-  }
-  return next
 }
 
 function focusPointsEqual(left, right) {
