@@ -3,6 +3,7 @@ import {
   computeGoalProgress,
   computeLibraryStats,
   computeYearInReview,
+  downloadLibraryCsv,
   downloadLibraryExport,
   LIBRARY_SORT_OPTIONS,
   loadReadingGoals,
@@ -395,6 +396,20 @@ function LibraryPanel({
       }
       const { count, filename } = downloadLibraryExport({ books: library, shelves })
       onBackupExported?.()
+      showTransferFeedback(`Exported ${count} book${count === 1 ? '' : 's'} to ${filename}.`)
+    } catch (error) {
+      showTransferFeedback(error instanceof Error ? error.message : 'Could not export your library.', true)
+    }
+  }
+
+  const exportLibraryCsv = () => {
+    clearTransferFeedback()
+    try {
+      if (!library.length) {
+        showTransferFeedback('Add at least one book before exporting.', true)
+        return
+      }
+      const { count, filename } = downloadLibraryCsv({ books: library, shelves })
       showTransferFeedback(`Exported ${count} book${count === 1 ? '' : 's'} to ${filename}.`)
     } catch (error) {
       showTransferFeedback(error instanceof Error ? error.message : 'Could not export your library.', true)
@@ -1044,6 +1059,14 @@ function LibraryPanel({
           style={{ ...actionButton(), flex: 1, opacity: library.length ? 1 : 0.45 }}
         >
           Export JSON
+        </button>
+        <button
+          type="button"
+          onClick={exportLibraryCsv}
+          disabled={!library.length}
+          style={{ ...actionButton(), flex: 1, opacity: library.length ? 1 : 0.45 }}
+        >
+          Export CSV
         </button>
         <button
           type="button"

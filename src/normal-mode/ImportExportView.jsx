@@ -2,12 +2,13 @@ import { useRef, useState } from 'react'
 import { Download, Upload } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { parseLibraryFile } from '../library'
+import { downloadLibraryCsv, parseLibraryFile } from '../library'
 
 const MAX_IMPORT_BYTES = 5_000_000
 
 function ImportExportView({
   library,
+  shelves,
   onReplaceLibrary,
   onMergeLibrary,
   onExport,
@@ -92,17 +93,34 @@ function ImportExportView({
     }
   }
 
+  const handleExportCsv = () => {
+    try {
+      if (!library.length) {
+        onStatus?.('Add at least one book before exporting.')
+        return
+      }
+      const { count, filename } = downloadLibraryCsv({ books: library, shelves })
+      onStatus?.(`Exported ${count} book${count === 1 ? '' : 's'} to ${filename}.`)
+    } catch (error) {
+      onStatus?.(error instanceof Error ? error.message : 'Could not export your library.')
+    }
+  }
+
   return (
     <div className="grid gap-6 md:grid-cols-2">
       <Card>
         <CardHeader>
           <CardTitle>Export library</CardTitle>
-          <CardDescription>Download a JSON backup of your books and shelves.</CardDescription>
+          <CardDescription>Download a JSON or CSV backup of your books and shelves.</CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="flex flex-wrap gap-2">
           <Button onClick={handleExport}>
             <Download className="mr-2 h-4 w-4" />
             Export JSON
+          </Button>
+          <Button onClick={handleExportCsv} variant="outline">
+            <Download className="mr-2 h-4 w-4" />
+            Export CSV
           </Button>
         </CardContent>
       </Card>
