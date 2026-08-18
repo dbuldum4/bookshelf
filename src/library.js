@@ -176,8 +176,9 @@ function clamp(value, min, max) {
 function normalizeBookFormat(value) {
   const raw = String(value || '').trim().toLowerCase()
   if (BOOK_FORMATS.includes(raw)) return raw
-  if (/\baudio|\baudible/.test(raw)) return 'audiobook'
+  // Kindle Edition with Audio/Video is an ebook, not an audiobook.
   if (/\be-?book|\bkindle|\bnook|\bepub|\bmobi|\bkobo/.test(raw)) return 'ebook'
+  if (/\baudiobook|\baudible|\bmp3\s*cd/.test(raw)) return 'audiobook'
   if (/\bhard|\bpaper|\bmass market|\btrade|\bboard|\blibrary binding|\bphysical/.test(raw)) {
     return 'physical'
   }

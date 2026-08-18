@@ -22,6 +22,7 @@ import {
   applyShelfTransform,
   assignBookToShelf,
   BOOK_FORMATS,
+  MAX_PUBLISHED_YEAR,
   booksFitOnShelf,
   booksOnShelf,
   bookWorldFocusPosition,
@@ -887,7 +888,7 @@ function applyBookFieldUpdates(book, updates) {
   if (updates.publishedYear !== undefined) {
     const year = Number(updates.publishedYear)
     next.publishedYear = Number.isFinite(year)
-      ? Math.min(2100, Math.max(0, Math.round(year)))
+      ? Math.min(MAX_PUBLISHED_YEAR, Math.max(0, Math.round(year)))
       : 0
   }
   if (updates.format !== undefined) {

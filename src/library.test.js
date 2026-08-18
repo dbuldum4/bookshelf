@@ -25,6 +25,7 @@ import {
   loadLibraryState,
   loadReadingGoals,
   markLibraryBackupDone,
+  MAX_PUBLISHED_YEAR,
   normalizeReadingGoals,
   mergeBookRecords,
   mergeLibraryStates,
@@ -254,7 +255,7 @@ describe('normalize and sanitize', () => {
     expect(state.books[0]).toEqual(expect.objectContaining({
       series: 'Dune',
       seriesNumber: 0,
-      publishedYear: 2100,
+      publishedYear: MAX_PUBLISHED_YEAR,
       format: '',
     }))
     expect(state.books[1]).toEqual(expect.objectContaining({
@@ -269,6 +270,25 @@ describe('normalize and sanitize', () => {
       publishedYear: 1968,
       format: 'physical',
     }))
+  })
+
+  it('does not treat Kindle Edition with Audio/Video as an audiobook', () => {
+    const state = normalizeLibraryState({
+      books: [
+        { id: 'kindle-av', title: 'Kindle AV', format: 'Kindle Edition with Audio/Video' },
+        { id: 'kindle', title: 'Kindle', format: 'Kindle Edition' },
+        { id: 'mp3', title: 'Listen MP3', format: 'MP3 CD' },
+        { id: 'audible', title: 'Listen Audible', format: 'Audible Audio' },
+        { id: 'audio-only', title: 'AV extras', format: 'Audio/Video' },
+      ],
+      shelves: [createDefaultShelf()],
+    })
+
+    expect(state.books.find((book) => book.id === 'kindle-av').format).toBe('ebook')
+    expect(state.books.find((book) => book.id === 'kindle').format).toBe('ebook')
+    expect(state.books.find((book) => book.id === 'mp3').format).toBe('audiobook')
+    expect(state.books.find((book) => book.id === 'audible').format).toBe('audiobook')
+    expect(state.books.find((book) => book.id === 'audio-only').format).not.toBe('audiobook')
   })
 })
 
@@ -672,6 +692,7 @@ describe('csv and json import', () => {
       '"Digital","A",2020,ebook,',
       '"Listen","B",2018,,Audible Audio',
       '"Far Future","C",9999,,',
+      '"Kindle Mix","D",2015,,"Kindle Edition with Audio/Video"',
     ].join('\n')
 
     const result = parseLibraryCsv(csv)
@@ -689,9 +710,14 @@ describe('csv and json import', () => {
       format: 'audiobook',
     }))
     expect(result.books[3]).toEqual(expect.objectContaining({
-      publishedYear: 2100,
+      publishedYear: MAX_PUBLISHED_YEAR,
       format: '',
     }))
+    expect(result.books[4]).toEqual(expect.objectContaining({
+      title: 'Kindle Mix',
+      format: 'ebook',
+    }))
+    expect(result.books[4].format).not.toBe('audiobook')
   })
 
   it('round-trips multi-shelf export JSON', () => {
