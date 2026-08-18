@@ -3,6 +3,7 @@ import {
   LEGACY_STORAGE_KEY_V2,
   LIBRARY_STORAGE_KEY,
   deserializeLibraryState,
+  indexedDBWriteOptions,
   librarySavedAt,
   serializeLibraryState,
   writeLibraryToIndexedDB,
@@ -487,8 +488,8 @@ export function loadLibrary() {
   return loadLibraryState().books
 }
 
-export function saveLibraryState(state) {
-  if (typeof window === 'undefined') return false
+function writeLocalLibraryRecord(state) {
+  if (typeof window === 'undefined') return { record: null, wroteLocal: false }
   const normalized = normalizeLibraryState(state)
   const savedAt = Date.now()
   const serialized = serializeLibraryState(normalized, savedAt)
@@ -506,9 +507,25 @@ export function saveLibraryState(state) {
   } catch {
     wroteLocal = false
   }
+  return { record, wroteLocal }
+}
+
+function persistRecordToIndexedDB(record) {
+  if (!record) return Promise.resolve(false)
+  return writeLibraryToIndexedDB(record, indexedDBWriteOptions())
+}
+
+export function saveLibraryState(state) {
+  const { record, wroteLocal } = writeLocalLibraryRecord(state)
   // IndexedDB can still accept a library that no longer fits in localStorage.
-  if (record) void writeLibraryToIndexedDB(record)
+  void persistRecordToIndexedDB(record)
   return wroteLocal
+}
+
+export async function saveLibraryStateAsync(state) {
+  const { record, wroteLocal } = writeLocalLibraryRecord(state)
+  const wroteIdb = await persistRecordToIndexedDB(record)
+  return wroteLocal || wroteIdb
 }
 
 function readExistingShelves() {
