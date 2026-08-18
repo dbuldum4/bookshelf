@@ -35,6 +35,7 @@ import {
   mergeLibraryStates,
   saveLibraryState,
   shouldRemindLibraryBackup,
+  tryMoveShelf,
   tryReorderBookOnShelf,
   tryReorderBookToIndex,
 } from './library'
@@ -540,13 +541,18 @@ export default function App() {
   }
 
   const moveShelf = useCallback((shelfId, { x, z }) => {
-    setLibraryState((state) => ({
-      ...state,
-      shelves: state.shelves.map((shelf) =>
-        shelf.id === shelfId ? { ...shelf, x, z } : shelf
-      ),
-    }))
-  }, [])
+    let blocked = null
+    setLibraryState((state) => {
+      const result = tryMoveShelf(state.shelves, shelfId, { x, z })
+      if (!result.ok) {
+        blocked = result.reason
+        return state
+      }
+      if (result.shelves === state.shelves) return state
+      return { ...state, shelves: result.shelves }
+    })
+    if (blocked) flashStatus(blocked)
+  }, [flashStatus])
 
   const handleAddShelf = () => {
     const last = shelves[shelves.length - 1]
