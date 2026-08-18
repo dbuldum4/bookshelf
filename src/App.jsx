@@ -21,6 +21,7 @@ import {
   applyRoomPreset,
   applyShelfTransform,
   assignBookToShelf,
+  BOOK_FORMATS,
   booksFitOnShelf,
   booksOnShelf,
   bookWorldFocusPosition,
@@ -876,6 +877,21 @@ function applyBookFieldUpdates(book, updates) {
     next.currentPage = next.pageCount
       ? Math.min(currentPage, next.pageCount)
       : Math.min(currentPage, MAX_UNKNOWN_PAGE)
+  }
+  if (updates.series !== undefined) {
+    next.series = typeof updates.series === 'string' ? updates.series : String(updates.series ?? '')
+  }
+  if (updates.seriesNumber !== undefined) {
+    next.seriesNumber = Math.max(0, Math.round(Number(updates.seriesNumber)) || 0)
+  }
+  if (updates.publishedYear !== undefined) {
+    const year = Number(updates.publishedYear)
+    next.publishedYear = Number.isFinite(year)
+      ? Math.min(2100, Math.max(0, Math.round(year)))
+      : 0
+  }
+  if (updates.format !== undefined) {
+    next.format = BOOK_FORMATS.includes(updates.format) ? updates.format : ''
   }
   return next
 }

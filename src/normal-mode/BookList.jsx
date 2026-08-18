@@ -95,6 +95,7 @@ function BookList({
         [
           book.title,
           book.author,
+          book.series || '',
           ...(book.tags || []),
           ...(book.quotes || []),
           book.notes || '',
