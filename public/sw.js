@@ -1,5 +1,5 @@
 // Bump CACHE_NAME whenever this file changes so browsers install a new worker.
-const CACHE_NAME = 'bookshelf-shell-v2'
+const CACHE_NAME = 'bookshelf-shell-v3'
 const MATCH = { ignoreSearch: true }
 const SHELL = [
   './',
@@ -14,6 +14,7 @@ const SHELL = [
 
 const resolvePath = (path) => new URL(path, self.location).pathname
 const htmlPaths = new Set(['./', './index.html'].map(resolvePath))
+const hashedAssetsPrefix = resolvePath('./assets/')
 const immutablePaths = new Set(
   [
     './favicon.svg',
@@ -31,6 +32,16 @@ const isSameOriginGet = (request, url) =>
 
 const isHtmlNavigation = (request, url) =>
   request.mode === 'navigate' || htmlPaths.has(url.pathname)
+
+// Vite hashed build outputs are content-addressed and safe to reuse across visits.
+const isHashedAsset = (url) => url.pathname.startsWith(hashedAssetsPrefix)
+
+const isImmutable = (url) => isHashedAsset(url) || immutablePaths.has(url.pathname)
+
+const isHtmlResponse = (response) => {
+  const type = response.headers.get('content-type') || ''
+  return type.includes('text/html')
+}
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -57,22 +68,62 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const { request } = event
   const url = new URL(request.url)
+  // Cross-origin (including Open Library) is never intercepted.
   if (!isSameOriginGet(request, url)) return
 
-  if (isHtmlNavigation(request, url) || !immutablePaths.has(url.pathname)) {
-    event.respondWith(networkFirst(request))
+  if (isHtmlNavigation(request, url) || !isImmutable(url)) {
+    event.respondWith(networkFirst(request, url))
     return
   }
 
   event.respondWith(cacheFirst(request))
 })
 
-async function putInCache(cache, request, response) {
-  try {
-    await cache.put(request, response)
-  } catch {
-    // redirected, quota, or partial responses cannot be stored
+function putInCache(cache, request, response) {
+  // Do not await: large hashed assets should stream to the page immediately.
+  void (async () => {
+    try {
+      await cache.put(request, response)
+    } catch {
+      // redirected, quota, or partial responses cannot be stored
+    }
+  })()
+}
+
+function referencedPathsFromHtml(html) {
+  const paths = new Set()
+  const pattern = /(?:src|href)=["']([^"']+)["']/gi
+  let match
+  while ((match = pattern.exec(html))) {
+    try {
+      const url = new URL(match[1], self.location)
+      if (url.origin === self.location.origin) paths.add(url.pathname)
+    } catch {
+      // ignore malformed URLs in markup
+    }
   }
+  return paths
+}
+
+function pruneHashedAssetsNotIn(response) {
+  // Drop previous Vite hashes so they cannot accumulate in the current cache.
+  void (async () => {
+    try {
+      const html = await response.text()
+      const referenced = referencedPathsFromHtml(html)
+      const cache = await caches.open(CACHE_NAME)
+      const keys = await cache.keys()
+      await Promise.all(
+        keys.map((request) => {
+          const url = new URL(request.url)
+          if (!isHashedAsset(url) || referenced.has(url.pathname)) return undefined
+          return cache.delete(request)
+        }),
+      )
+    } catch {
+      // ignore prune failures
+    }
+  })()
 }
 
 async function cacheFirst(request) {
@@ -81,16 +132,19 @@ async function cacheFirst(request) {
   if (cached) return cached
 
   const response = await fetch(request)
-  if (response.ok) await putInCache(cache, request, response.clone())
+  if (response.ok) putInCache(cache, request, response.clone())
   return response
 }
 
-async function networkFirst(request) {
+async function networkFirst(request, url) {
   const cache = await caches.open(CACHE_NAME)
   try {
     const response = await fetch(request)
     if (response.ok) {
-      await putInCache(cache, request, response.clone())
+      putInCache(cache, request, response.clone())
+      if (isHtmlNavigation(request, url) || isHtmlResponse(response)) {
+        pruneHashedAssetsNotIn(response.clone())
+      }
       return response
     }
     const cached = await cache.match(request, MATCH)
