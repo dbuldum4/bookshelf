@@ -778,12 +778,14 @@ export function shouldRemindLibraryBackup(options = {}) {
 /* Merge import                                                        */
 /* ------------------------------------------------------------------ */
 
+// Paused/DNF must sit at least as high as Reading (and Finished) so a
+// shallower Goodreads rematch cannot regress a local Paused/DNF status.
 const STATUS_RANK = {
   'Want to Read': 0,
-  Paused: 1,
-  'Did Not Finish': 1,
   Reading: 2,
   Finished: 3,
+  Paused: 3,
+  'Did Not Finish': 3,
 }
 
 function normalizeMatchKey(title, author) {
@@ -1192,32 +1194,40 @@ function matchGoodreadsShelf(value) {
   return null
 }
 
+function isPausedOrDnfStatus(status) {
+  return status === 'Paused' || status === 'Did Not Finish'
+}
+
+function firstMappedShelfToken(value, accept = () => true) {
+  if (!value) return null
+  for (const token of String(value).split(/[,;]/).map((part) => part.trim()).filter(Boolean)) {
+    const mapped = matchGoodreadsShelf(token)
+    if (mapped && accept(mapped)) return mapped
+  }
+  return null
+}
+
 /**
  * Resolve reading status from CSV columns.
- * Prefer Exclusive Shelf / Shelf / Status. Fall back to Bookshelves only by
- * scanning comma-separated tokens for a known exclusive-shelf value so multi-tag
- * cells like "currently-reading, fantasy" do not collapse to Want to Read.
+ * Prefer Exclusive Shelf / Shelf / Status. Official exclusive values are
+ * read/currently-reading/to-read; dnf/paused usually live only in Bookshelves,
+ * so those tokens override the official exclusive when present. Otherwise fall
+ * back to scanning Bookshelves for any known status so multi-tag cells like
+ * "currently-reading, fantasy" do not collapse to Want to Read.
  */
 function resolveGoodreadsStatus(row) {
   const exclusive = cell(row, ['exclusive shelf', 'shelf', 'status'])
   if (exclusive) {
-    const mapped = matchGoodreadsShelf(exclusive)
+    const mapped = matchGoodreadsShelf(exclusive) || firstMappedShelfToken(exclusive)
+    if (mapped && isPausedOrDnfStatus(mapped)) return mapped
+    // Official exclusive shelves omit dnf/paused; those tokens live in Bookshelves.
+    const override = firstMappedShelfToken(cell(row, ['bookshelves']), isPausedOrDnfStatus)
+    if (override) return override
     if (mapped) return mapped
-    // Exclusive shelf is sometimes free-form; still try token split.
-    for (const token of exclusive.split(/[,;]/).map((part) => part.trim()).filter(Boolean)) {
-      const tokenMapped = matchGoodreadsShelf(token)
-      if (tokenMapped) return tokenMapped
-    }
     return 'Want to Read'
   }
 
-  const bookshelves = cell(row, ['bookshelves'])
-  if (!bookshelves) return 'Want to Read'
-  for (const token of bookshelves.split(/[,;]/).map((part) => part.trim()).filter(Boolean)) {
-    const mapped = matchGoodreadsShelf(token)
-    if (mapped) return mapped
-  }
-  return 'Want to Read'
+  return firstMappedShelfToken(cell(row, ['bookshelves'])) || 'Want to Read'
 }
 
 function parseLooseDate(value) {

@@ -703,6 +703,33 @@ describe('csv and json import', () => {
     expect(result.books[5].tags).toEqual(['mystery'])
   })
 
+  it('lets Bookshelves dnf/paused override official Exclusive Shelf values', () => {
+    const csv = [
+      'Title,Author,Exclusive Shelf,Bookshelves',
+      '"Quit mid","A","currently-reading","dnf, fantasy"',
+      '"Abandoned after","B","read","abandoned, favorites"',
+      '"On hold","C","currently-reading","paused, mystery"',
+      '"Waiting","D","to-read","on-hold"',
+      '"Stopped","E","read","did-not-finish"',
+      '"Hold from reading","G","reading","paused"',
+      '"Still reading","F","currently-reading","favorites"',
+    ].join('\n')
+
+    const result = parseLibraryCsv(csv)
+    expect(result.books.map((book) => book.status)).toEqual([
+      'Did Not Finish',
+      'Did Not Finish',
+      'Paused',
+      'Paused',
+      'Did Not Finish',
+      'Paused',
+      'Reading',
+    ])
+    expect(result.books[0].tags).toEqual(['fantasy'])
+    expect(result.books[1].tags).toEqual(['favorites'])
+    expect(result.books[2].tags).toEqual(['mystery'])
+  })
+
   it('stores only checksum-valid ISBNs from CSV', () => {
     const csv = [
       'Title,Author,ISBN13',
@@ -818,6 +845,32 @@ describe('merge import', () => {
     expect(result.updated).toBe(2)
     expect(result.added).toBe(0)
     expect(result.books.find((book) => book.id === 'keep').rating).toBe(4)
+  })
+
+  it('does not regress local Paused or Did Not Finish from a shallower rematch', () => {
+    const pausedVsReading = mergeBookRecords(
+      { id: '1', title: 'T', author: 'A', status: 'Paused', shelfId: DEFAULT_SHELF_ID },
+      { id: '2', title: 'T', author: 'A', status: 'Reading', shelfId: DEFAULT_SHELF_ID },
+    )
+    expect(pausedVsReading.status).toBe('Paused')
+
+    const pausedVsFinished = mergeBookRecords(
+      { id: '1', title: 'T', author: 'A', status: 'Paused', shelfId: DEFAULT_SHELF_ID },
+      { id: '2', title: 'T', author: 'A', status: 'Finished', shelfId: DEFAULT_SHELF_ID },
+    )
+    expect(pausedVsFinished.status).toBe('Paused')
+
+    const dnfVsReading = mergeBookRecords(
+      { id: '1', title: 'T', author: 'A', status: 'Did Not Finish', shelfId: DEFAULT_SHELF_ID },
+      { id: '2', title: 'T', author: 'A', status: 'Reading', shelfId: DEFAULT_SHELF_ID },
+    )
+    expect(dnfVsReading.status).toBe('Did Not Finish')
+
+    const dnfVsFinished = mergeBookRecords(
+      { id: '1', title: 'T', author: 'A', status: 'Did Not Finish', shelfId: DEFAULT_SHELF_ID },
+      { id: '2', title: 'T', author: 'A', status: 'Finished', shelfId: DEFAULT_SHELF_ID },
+    )
+    expect(dnfVsFinished.status).toBe('Did Not Finish')
   })
 
   it('appends differing notes instead of dropping import text', () => {
