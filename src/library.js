@@ -1963,6 +1963,78 @@ export function assignBookToShelf(library, bookId, shelfId, shelf) {
   return { ok: true, books: next }
 }
 
+function localIsoDate(now = Date.now()) {
+  const date = new Date(now)
+  const offset = date.getTimezoneOffset() * 60_000
+  return new Date(date.getTime() - offset).toISOString().slice(0, 10)
+}
+
+function selectedBookIdSet(bookIds) {
+  return new Set((Array.isArray(bookIds) ? bookIds : []).filter(Boolean))
+}
+
+/**
+ * Set reading status on selected books. Stamps started/finished dates like the editor.
+ * Returns { ok, books } or { ok:false, reason }.
+ */
+export function applyBulkStatus(library, bookIds, status) {
+  if (!READING_STATUSES.includes(status)) {
+    return { ok: false, reason: 'Choose a valid reading status.' }
+  }
+  const ids = selectedBookIdSet(bookIds)
+  if (!ids.size) return { ok: false, reason: 'Select at least one book.' }
+
+  const books = (Array.isArray(library) ? library : []).map((book) => {
+    if (!ids.has(book.id)) return book
+    const next = { ...book, status }
+    if (status === 'Reading' && !book.startedAt) next.startedAt = localIsoDate()
+    if (status === 'Finished' && !book.finishedAt) next.finishedAt = localIsoDate()
+    return next
+  })
+  return { ok: true, books }
+}
+
+/**
+ * Add one tag to each selected book (trimmed, deduped, capped).
+ * Returns { ok, books } or { ok:false, reason }.
+ */
+export function applyBulkTag(library, bookIds, tag) {
+  const [clean] = normalizeTags([tag])
+  if (!clean) return { ok: false, reason: 'Enter a tag to add.' }
+  const ids = selectedBookIdSet(bookIds)
+  if (!ids.size) return { ok: false, reason: 'Select at least one book.' }
+
+  const books = (Array.isArray(library) ? library : []).map((book) => {
+    if (!ids.has(book.id)) return book
+    return { ...book, tags: normalizeTags([...(book.tags || []), clean]) }
+  })
+  return { ok: true, books }
+}
+
+/**
+ * Move selected books onto one shelf. If the target would overflow, refuse the
+ * whole batch and leave every book where it was.
+ * Returns { ok, books } or { ok:false, reason }.
+ */
+export function applyBulkMove(library, shelves, bookIds, shelfId) {
+  const shelf = (Array.isArray(shelves) ? shelves : []).find((entry) => entry.id === shelfId)
+  if (!shelf) return { ok: false, reason: 'That shelf is no longer available.' }
+
+  const ids = selectedBookIdSet(bookIds)
+  if (!ids.size) return { ok: false, reason: 'Select at least one book.' }
+
+  const books = (Array.isArray(library) ? library : []).map((book) => (
+    ids.has(book.id) ? { ...book, shelfId } : book
+  ))
+  if (!booksFitOnShelf(booksOnShelf(books, shelfId), shelf)) {
+    return {
+      ok: false,
+      reason: 'That move would overflow the shelf. Free space or resize it in Arrange mode.',
+    }
+  }
+  return { ok: true, books }
+}
+
 /**
  * Reorder a book within its shelf (delta -1 or +1 among shelf mates).
  * Global array order is rewritten so shelf-relative order is preserved.

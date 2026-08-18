@@ -18,6 +18,9 @@ import {
   saveReducedMotionPreference,
 } from './graphicsQuality'
 import {
+  applyBulkMove,
+  applyBulkStatus,
+  applyBulkTag,
   applyRoomPreset,
   applyShelfTransform,
   assignBookToShelf,
@@ -176,6 +179,7 @@ export default function App() {
   )
   const [libraryState, setLibraryState] = useState(() => initialLibraryRef.current.libraryState)
   const [selectedBookId, setSelectedBookId] = useState(null)
+  const [bulkBookIds, setBulkBookIds] = useState(() => new Set())
   const [selectedShelfId, setSelectedShelfId] = useState(
     () => initialLibraryRef.current.selectedShelfId
   )
@@ -229,6 +233,19 @@ export default function App() {
       setSelectedShelfId(shelves[0].id)
     }
   }, [shelves, selectedShelfId])
+
+  useEffect(() => {
+    const live = new Set(library.map((book) => book.id))
+    setBulkBookIds((current) => {
+      let changed = false
+      const next = new Set()
+      for (const id of current) {
+        if (live.has(id)) next.add(id)
+        else changed = true
+      }
+      return changed ? next : current
+    })
+  }, [library])
 
   // Keep focus synchronized with layout changes. Shelf selection is set only
   // on explicit book select so Arrange drag/resize does not steal the shelf.
@@ -313,6 +330,7 @@ export default function App() {
         if (document.querySelector('[data-modal="true"], [aria-modal="true"]')) return
         if (isTypingTarget(event.target)) return
         if (selectedBookId) setSelectedBookId(null)
+        setBulkBookIds((current) => (current.size === 0 ? current : new Set()))
         return
       }
 
@@ -438,6 +456,65 @@ export default function App() {
       books: state.books.filter((book) => book.id !== selectedBookId),
     }))
     setSelectedBookId(null)
+  }
+
+  const toggleBulkBook = useCallback((id) => {
+    setBulkBookIds((current) => {
+      const next = new Set(current)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
+
+  const setBulkBooks = useCallback((ids) => {
+    setBulkBookIds(new Set(ids))
+  }, [])
+
+  const clearBulkBooks = useCallback(() => {
+    setBulkBookIds(new Set())
+  }, [])
+
+  const handleBulkStatus = (bookIds, status) => {
+    let outcome = { ok: false }
+    setLibraryState((state) => {
+      outcome = applyBulkStatus(state.books, bookIds, status)
+      return outcome.ok ? { ...state, books: outcome.books } : state
+    })
+    if (!outcome.ok) {
+      if (outcome.reason) flashStatus(outcome.reason)
+      return false
+    }
+    setBulkBookIds(new Set())
+    return true
+  }
+
+  const handleBulkTag = (bookIds, tag) => {
+    let outcome = { ok: false }
+    setLibraryState((state) => {
+      outcome = applyBulkTag(state.books, bookIds, tag)
+      return outcome.ok ? { ...state, books: outcome.books } : state
+    })
+    if (!outcome.ok) {
+      if (outcome.reason) flashStatus(outcome.reason)
+      return false
+    }
+    setBulkBookIds(new Set())
+    return true
+  }
+
+  const handleBulkMove = (bookIds, shelfId) => {
+    let outcome = { ok: false }
+    setLibraryState((state) => {
+      outcome = applyBulkMove(state.books, state.shelves, bookIds, shelfId)
+      return outcome.ok ? { ...state, books: outcome.books } : state
+    })
+    if (!outcome.ok) {
+      if (outcome.reason) flashStatus(outcome.reason)
+      return false
+    }
+    setBulkBookIds(new Set())
+    return true
   }
 
   const replaceLibrary = (next) => {
@@ -688,6 +765,13 @@ export default function App() {
           selectedShelfId={selectedShelfId}
           onSelectBook={selectBook}
           onSelectShelf={setSelectedShelfId}
+          bulkBookIds={bulkBookIds}
+          onToggleBulkBook={toggleBulkBook}
+          onSetBulkBooks={setBulkBooks}
+          onClearBulkBooks={clearBulkBooks}
+          onBulkStatus={handleBulkStatus}
+          onBulkTag={handleBulkTag}
+          onBulkMove={handleBulkMove}
           onAddBook={addBook}
           onUpdateSelectedBook={updateSelectedBook}
           onDeleteSelectedBook={deleteSelectedBook}
@@ -838,6 +922,13 @@ export default function App() {
             selectedShelfId={selectedShelfId}
             onSelectBook={selectBook}
             onSelectShelf={setSelectedShelfId}
+            bulkBookIds={bulkBookIds}
+            onToggleBulkBook={toggleBulkBook}
+            onSetBulkBooks={setBulkBooks}
+            onClearBulkBooks={clearBulkBooks}
+            onBulkStatus={handleBulkStatus}
+            onBulkTag={handleBulkTag}
+            onBulkMove={handleBulkMove}
             onAddBook={addBook}
             onReplaceLibrary={replaceLibrary}
             onMergeLibrary={mergeLibrary}
