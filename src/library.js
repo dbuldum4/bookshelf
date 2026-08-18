@@ -2,7 +2,8 @@ const STORAGE_KEY = 'bookshelf-library-v3'
 const LEGACY_STORAGE_KEY_V2 = 'bookshelf-library-v2'
 const LEGACY_STORAGE_KEY_V1 = 'bookshelf-library-v1'
 
-export const READING_STATUSES = ['Want to Read', 'Reading', 'Finished']
+export const READING_STATUSES = ['Want to Read', 'Reading', 'Paused', 'Finished', 'Did Not Finish']
+export const BOOK_FORMATS = ['physical', 'ebook', 'audiobook']
 
 /** Default named case every library starts with (and migrations land on). */
 export const DEFAULT_SHELF_ID = 'library'
@@ -102,6 +103,7 @@ const MAX_SHORT_FIELD = 500
 const MAX_ID_LENGTH = 120
 const MAX_TAGS = 40
 const MAX_QUOTES = 50
+const MAX_READS = 50
 const MAX_BOOKS_IMPORT = 10000
 const MAX_CURRENT_PAGE_WITHOUT_COUNT = 100000
 const MAX_IMPORT_TEXT_LENGTH = 5_000_000
@@ -165,6 +167,53 @@ function normalizeQuotes(value) {
     .map((quote) => quote.trim().slice(0, MAX_FIELD_LENGTH))
     .filter(Boolean)
     .slice(0, MAX_QUOTES)
+}
+
+/** paperback/hardcover (and similar print bindings) collapse to physical. */
+export function mapBookFormat(value) {
+  const raw = String(value || '').trim().toLowerCase()
+  if (!raw) return ''
+  if (
+    raw === 'paperback'
+    || raw === 'hardcover'
+    || raw === 'hardback'
+    || raw === 'hard cover'
+    || raw === 'paper back'
+    || raw === 'physical'
+    || raw === 'print'
+  ) {
+    return 'physical'
+  }
+  if (raw === 'ebook' || raw === 'e-book' || raw === 'e book' || raw === 'digital' || raw === 'kindle' || raw === 'epub') {
+    return 'ebook'
+  }
+  if (raw === 'audio' || raw === 'audiobook' || raw === 'audio book' || raw === 'audible') {
+    return 'audiobook'
+  }
+  return BOOK_FORMATS.includes(raw) ? raw : ''
+}
+
+function normalizeReads(value) {
+  const list = Array.isArray(value) ? value : []
+  const seen = new Set()
+  const reads = []
+  for (const entry of list) {
+    let startedAt = ''
+    let finishedAt = ''
+    if (typeof entry === 'string') {
+      finishedAt = asIsoDateString(entry)
+    } else if (entry && typeof entry === 'object') {
+      startedAt = asIsoDateString(entry.startedAt)
+      finishedAt = asIsoDateString(entry.finishedAt)
+    }
+    if (!startedAt && !finishedAt) continue
+    const key = `${startedAt}|${finishedAt}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    reads.push({ startedAt, finishedAt })
+    if (reads.length >= MAX_READS) break
+  }
+  return reads
 }
 
 function clamp(value, min, max) {
@@ -266,6 +315,8 @@ function normalizeBook(value, index, defaultShelfId = DEFAULT_SHELF_ID) {
     finishedAt: asIsoDateString(book.finishedAt),
     isbn: isbn.slice(0, MAX_SHORT_FIELD),
     coverUrl: sanitizeCoverUrl(book.coverUrl),
+    format: mapBookFormat(book.format),
+    reads: normalizeReads(book.reads),
     createdAt,
     shelfId,
   }
@@ -554,6 +605,8 @@ const BOOK_EXPORT_FIELDS = [
   'finishedAt',
   'isbn',
   'coverUrl',
+  'format',
+  'reads',
   'createdAt',
   'shelfId',
 ]
@@ -780,8 +833,10 @@ export function shouldRemindLibraryBackup(options = {}) {
 
 const STATUS_RANK = {
   'Want to Read': 0,
-  Reading: 1,
-  Finished: 2,
+  Paused: 1,
+  Reading: 2,
+  'Did Not Finish': 2,
+  Finished: 3,
 }
 
 function normalizeMatchKey(title, author) {
@@ -859,6 +914,8 @@ export function mergeBookRecords(current, incoming, index = 0) {
     quotes: normalizeQuotes([...(left.quotes || []), ...(right.quotes || [])]),
     startedAt: earlierIso(left.startedAt, right.startedAt),
     finishedAt: laterIso(left.finishedAt, right.finishedAt),
+    format: preferNonEmpty(left.format, right.format),
+    reads: normalizeReads([...(left.reads || []), ...(right.reads || [])]),
     createdAt: earlierIso(left.createdAt, right.createdAt) || left.createdAt,
     shelfId: left.shelfId,
     id: left.id,
@@ -1183,7 +1240,80 @@ function matchGoodreadsShelf(value) {
   }
   if (shelf === 'read' || shelf === 'finished') return 'Finished'
   if (shelf === 'to-read' || shelf === 'to read' || shelf === 'want to read') return 'Want to Read'
+  if (shelf === 'did-not-finish' || shelf === 'did not finish' || shelf === 'dnf') return 'Did Not Finish'
+  if (shelf === 'paused' || shelf === 'on-hold' || shelf === 'on hold') return 'Paused'
   return null
+}
+
+const STORYGRAPH_HEADER_MARKERS = ['read status', 'last date read', 'dates read', 'star rating']
+
+/** StoryGraph exports use Authors + Read Status (not Goodreads Exclusive Shelf). */
+export function isStoryGraphCsv(headers) {
+  const set = headers instanceof Set ? headers : new Set(headers)
+  return STORYGRAPH_HEADER_MARKERS.some((header) => set.has(header))
+}
+
+function matchStoryGraphStatus(value) {
+  const status = String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/_/g, '-')
+  if (!status) return null
+  if (status === 'read' || status === 'finished' || status === 'complete' || status === 'completed') {
+    return 'Finished'
+  }
+  if (status === 'currently-reading' || status === 'currently reading' || status === 'reading') {
+    return 'Reading'
+  }
+  if (
+    status === 'to-read'
+    || status === 'to read'
+    || status === 'to-be-read'
+    || status === 'to be read'
+    || status === 'tbr'
+    || status === 'want to read'
+  ) {
+    return 'Want to Read'
+  }
+  if (status === 'did-not-finish' || status === 'did not finish' || status === 'dnf') {
+    return 'Did Not Finish'
+  }
+  if (status === 'paused' || status === 'on-hold' || status === 'on hold') return 'Paused'
+  return matchGoodreadsShelf(status)
+}
+
+function resolveStoryGraphStatus(row) {
+  const mapped = matchStoryGraphStatus(cell(row, ['read status', 'status']))
+  if (mapped) return mapped
+  return resolveGoodreadsStatus(row)
+}
+
+/** Split StoryGraph Dates Read into { startedAt, finishedAt } entries. */
+export function parseStoryGraphDatesRead(value) {
+  const raw = String(value || '').trim()
+  if (!raw) return []
+  const reads = []
+  for (const part of raw.split(',').map((entry) => entry.trim()).filter(Boolean)) {
+    const slashRange = part.match(/^(\d{4}\/\d{1,2}\/\d{1,2})\s*[-–]\s*(\d{4}\/\d{1,2}\/\d{1,2})$/)
+    if (slashRange) {
+      reads.push({
+        startedAt: parseLooseDate(slashRange[1]),
+        finishedAt: parseLooseDate(slashRange[2]),
+      })
+      continue
+    }
+    const isoRange = part.match(/^(\d{4}-\d{2}-\d{2})\s*[-–]\s*(\d{4}-\d{2}-\d{2})$/)
+    if (isoRange) {
+      reads.push({
+        startedAt: parseLooseDate(isoRange[1]),
+        finishedAt: parseLooseDate(isoRange[2]),
+      })
+      continue
+    }
+    const finishedAt = parseLooseDate(part)
+    if (finishedAt) reads.push({ startedAt: '', finishedAt })
+  }
+  return reads
 }
 
 /**
@@ -1236,8 +1366,8 @@ function cleanIsbn(value) {
 }
 
 /**
- * Parse Goodreads-style or simple CSV exports into normalized library books.
- * Accepts headers like Title, Author, ISBN13, My Rating, Exclusive Shelf, Date Read.
+ * Parse Goodreads- or StoryGraph-style CSV exports into normalized library books.
+ * StoryGraph is detected from headers such as Read Status, Last Date Read, Dates Read, Star Rating.
  */
 export function parseLibraryCsv(text) {
   if (typeof text !== 'string' || !text.trim()) {
@@ -1254,8 +1384,12 @@ export function parseLibraryCsv(text) {
 
   const headers = parseCsvLine(rows[0]).map(normalizeHeaderKey)
   if (!headers.some((header) => header === 'title' || header === 'book title')) {
-    throw new Error('CSV must include a Title column (Goodreads export works).')
+    throw new Error('CSV must include a Title column (Goodreads or StoryGraph export works).')
   }
+
+  const headerSet = new Set(headers)
+  const storygraph = isStoryGraphCsv(headerSet)
+  const hasDatesRead = headerSet.has('dates read')
 
   const books = []
   const seenIds = new Set()
@@ -1272,22 +1406,35 @@ export function parseLibraryCsv(text) {
     const title = cell(row, ['title', 'book title'])
     if (!title) continue
 
-    const author = cell(row, ['author', 'author l f', 'additional authors']) || 'Unknown author'
-    const isbn = cleanIsbn(cell(row, ['isbn13', 'isbn 13', 'isbn']))
+    const author = cell(row, ['authors', 'author', 'author l f', 'additional authors']) || 'Unknown author'
+    const isbn = cleanIsbn(cell(row, ['isbn uid', 'isbn13', 'isbn 13', 'isbn']))
     const pageCount = asNumber(cell(row, ['number of pages', 'pages', 'page count']))
-    const rating = Math.min(5, asNumber(cell(row, ['my rating', 'rating', 'stars'])))
-    const status = resolveGoodreadsStatus(row)
-    const finishedAt = parseLooseDate(cell(row, ['date read', 'date finished', 'finished at', 'finished']))
-    const startedAt = parseLooseDate(cell(row, ['date started', 'started at', 'started']))
+    const rating = Math.min(5, asNumber(cell(row, ['star rating', 'my rating', 'rating', 'stars'])))
+    const status = storygraph ? resolveStoryGraphStatus(row) : resolveGoodreadsStatus(row)
+    let finishedAt = parseLooseDate(cell(row, [
+      'last date read',
+      'date read',
+      'date finished',
+      'finished at',
+      'finished',
+    ]))
+    let startedAt = parseLooseDate(cell(row, ['date started', 'started at', 'started']))
+    let reads = []
+    if (hasDatesRead) {
+      reads = parseStoryGraphDatesRead(row['dates read'] || '')
+      const lastRead = reads[reads.length - 1]
+      if (lastRead?.finishedAt) finishedAt = lastRead.finishedAt
+      if (!startedAt && reads[0]?.startedAt) startedAt = reads[0].startedAt
+    }
     const createdAt = parseLooseDate(cell(row, ['date added', 'created at', 'added']))
-    const notes = cell(row, ['my review', 'private notes', 'notes', 'review'])
-    const shelves = cell(row, ['bookshelves', 'tags'])
+    const notes = cell(row, ['review', 'my review', 'private notes', 'notes'])
+    const shelves = cell(row, ['tags', 'bookshelves'])
     const tags = shelves
       ? shelves
         .split(/[,;]/)
         .map((tag) => tag.trim())
         .filter(Boolean)
-        .filter((tag) => !matchGoodreadsShelf(tag))
+        .filter((tag) => storygraph || !matchGoodreadsShelf(tag))
       : []
 
     const draft = {
@@ -1301,6 +1448,8 @@ export function parseLibraryCsv(text) {
       tags,
       finishedAt,
       startedAt,
+      format: mapBookFormat(cell(row, ['format', 'binding'])),
+      reads: hasDatesRead ? reads : undefined,
       createdAt: createdAt || undefined,
       currentPage: status === 'Finished' && pageCount ? pageCount : 0,
     }
@@ -1337,7 +1486,7 @@ function looksLikeCsv(text) {
 
 /**
  * Parse a library transfer file. Supports versioned JSON, bare book arrays,
- * and Goodreads-style CSV exports.
+ * and Goodreads- or StoryGraph-style CSV exports.
  */
 export function parseLibraryFile(text, filename = '') {
   const name = String(filename || '').toLowerCase()

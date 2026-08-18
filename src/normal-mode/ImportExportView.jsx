@@ -110,7 +110,7 @@ function ImportExportView({
       <Card>
         <CardHeader>
           <CardTitle>Import library</CardTitle>
-          <CardDescription>Import a JSON backup or a Goodreads-style CSV.</CardDescription>
+          <CardDescription>Import a JSON backup, a Goodreads CSV, or a StoryGraph CSV.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <input

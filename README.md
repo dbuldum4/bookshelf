@@ -12,7 +12,7 @@ A procedural 3D bookshelf scene built with React, Vite, Three.js, and Rapier phy
 - A curated 40-book library with real titles and authors rendered on each spine.
 - Selectable books that pull forward and open an editable detail card.
 - Reading status and personal notes saved locally in the browser.
-- Library panel with search, filters, sort, reading stats (finished this year, pages read, ratings), yearly reading goals, year-in-review, and JSON or Goodreads CSV import/export (merge or replace), plus a periodic backup reminder.
+- Library panel with search, filters, sort, reading stats (finished this year, pages read, ratings), yearly reading goals, year-in-review, and JSON, Goodreads, or StoryGraph CSV import/export (merge or replace), plus a periodic backup reminder.
 - Arrange mode room presets (Wall, L-shape, Gallery) and named case plaques on each 3D shelf.
 - Drag book spines in the 3D view to reorder them on a shelf; order is stored automatically with the library.
 - Cover art from Open Library rendered on 3D spines and front covers when available.
