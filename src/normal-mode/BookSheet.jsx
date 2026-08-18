@@ -7,6 +7,8 @@ import { Select } from '@/components/ui/select'
 import { Sheet, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Textarea } from '@/components/ui/textarea'
 import {
+  appendFinishedRead,
+  deriveReadBounds,
   lookupBookByIsbn,
   READING_STATUSES,
   searchAcclaimedBooks,
@@ -41,6 +43,7 @@ function BookSheet({
     currentPage: '',
     startedAt: '',
     finishedAt: '',
+    reads: [],
     tags: '',
     notes: '',
   })
@@ -72,6 +75,12 @@ function BookSheet({
         currentPage: book.currentPage || '',
         startedAt: book.startedAt || '',
         finishedAt: book.finishedAt || '',
+        reads: Array.isArray(book.reads)
+          ? book.reads.map((read) => ({
+            startedAt: read.startedAt || '',
+            finishedAt: read.finishedAt || '',
+          }))
+          : [],
         tags: (book.tags || []).join(', '),
         notes: book.notes || '',
       })
@@ -89,6 +98,7 @@ function BookSheet({
         currentPage: '',
         startedAt: '',
         finishedAt: '',
+        reads: [],
         tags: '',
         notes: '',
       })
@@ -108,7 +118,19 @@ function BookSheet({
   }, [isAdding, open])
 
   const handleChange = (field, value) => {
-    setDraft((current) => ({ ...current, [field]: value }))
+    setDraft((current) => {
+      if (field !== 'status') return { ...current, [field]: value }
+      const next = { ...current, status: value }
+      if (value === 'Reading' && !current.startedAt) next.startedAt = today()
+      if (value === 'Finished') {
+        const reads = appendFinishedRead(current, today())
+        const bounds = deriveReadBounds(reads)
+        next.reads = reads
+        next.startedAt = bounds.startedAt
+        next.finishedAt = bounds.finishedAt
+      }
+      return next
+    })
     if (!isAdding && book) {
       if (field === 'tags') return
       if (field === 'currentPage' || field === 'pageCount') {
@@ -116,10 +138,7 @@ function BookSheet({
       } else if (field === 'rating') {
         onUpdateBook({ rating: Number(value) })
       } else if (field === 'status') {
-        const updates = { status: value }
-        if (value === 'Reading' && !draft.startedAt) updates.startedAt = today()
-        if (value === 'Finished' && !draft.finishedAt) updates.finishedAt = today()
-        onUpdateBook(updates)
+        onUpdateBook({ status: value })
       } else if (field === 'shelfId') {
         onUpdateBook({ shelfId: value })
       } else {
@@ -150,6 +169,34 @@ function BookSheet({
   const removeQuote = (index) => {
     if (!book) return
     onUpdateBook({ quotes: (book.quotes || []).filter((_, i) => i !== index) })
+  }
+
+  const currentReads = () => (isAdding ? draft.reads : book?.reads) || []
+
+  const applyReads = (reads) => {
+    const meaningful = reads.filter((read) => read.startedAt || read.finishedAt)
+    const bounds = deriveReadBounds(meaningful)
+    setDraft((current) => ({
+      ...current,
+      reads,
+      startedAt: meaningful.length ? bounds.startedAt : '',
+      finishedAt: meaningful.length ? bounds.finishedAt : '',
+    }))
+    if (!isAdding) onUpdateBook({ reads })
+  }
+
+  const updateRead = (index, field, value) => {
+    applyReads(currentReads().map((read, readIndex) => (
+      readIndex === index ? { ...read, [field]: value } : read
+    )))
+  }
+
+  const addRead = () => {
+    applyReads([...currentReads(), { startedAt: '', finishedAt: '' }])
+  }
+
+  const removeRead = (index) => {
+    applyReads(currentReads().filter((_, readIndex) => readIndex !== index))
   }
 
   useEffect(() => {
@@ -428,33 +475,57 @@ function BookSheet({
           )}
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label htmlFor="book-started">Started</Label>
-            <div className="relative">
-              <Calendar className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                id="book-started"
-                type="date"
-                value={draft.startedAt}
-                onChange={(e) => handleChange('startedAt', e.target.value)}
-                className="pl-9"
-              />
-            </div>
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <Label>Read-throughs</Label>
+            <Button type="button" variant="outline" size="sm" onClick={addRead}>
+              + Add read
+            </Button>
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="book-finished">Finished</Label>
-            <div className="relative">
-              <Calendar className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                id="book-finished"
-                type="date"
-                value={draft.finishedAt}
-                onChange={(e) => handleChange('finishedAt', e.target.value)}
-                className="pl-9"
-              />
+          {((isAdding ? draft.reads : book?.reads) || []).length === 0 ? (
+            <p className="text-sm text-muted-foreground">Track each time you start or finish this book.</p>
+          ) : (
+            <div className="space-y-2">
+              {((isAdding ? draft.reads : book?.reads) || []).map((read, index) => (
+                <div key={`read-${index}`} className="space-y-2 rounded-md border p-2">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <Label htmlFor={index === 0 ? 'book-started' : `book-read-started-${index}`}>Started</Label>
+                      <div className="relative">
+                        <Calendar className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                        <Input
+                          id={index === 0 ? 'book-started' : `book-read-started-${index}`}
+                          type="date"
+                          value={read.startedAt || ''}
+                          onChange={(e) => updateRead(index, 'startedAt', e.target.value)}
+                          className="pl-9"
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor={index === 0 ? 'book-finished' : `book-read-finished-${index}`}>Finished</Label>
+                      <div className="relative">
+                        <Calendar className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                        <Input
+                          id={index === 0 ? 'book-finished' : `book-read-finished-${index}`}
+                          type="date"
+                          value={read.finishedAt || ''}
+                          onChange={(e) => updateRead(index, 'finishedAt', e.target.value)}
+                          className="pl-9"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex justify-end">
+                    <Button type="button" variant="ghost" size="sm" onClick={() => removeRead(index)}>
+                      <X className="mr-1 h-4 w-4" />
+                      Remove
+                    </Button>
+                  </div>
+                </div>
+              ))}
             </div>
-          </div>
+          )}
         </div>
 
         <div className="space-y-2">

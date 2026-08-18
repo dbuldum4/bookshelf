@@ -102,6 +102,7 @@ const MAX_SHORT_FIELD = 500
 const MAX_ID_LENGTH = 120
 const MAX_TAGS = 40
 const MAX_QUOTES = 50
+const MAX_READS = 50
 const MAX_BOOKS_IMPORT = 10000
 const MAX_CURRENT_PAGE_WITHOUT_COUNT = 100000
 const MAX_IMPORT_TEXT_LENGTH = 5_000_000
@@ -133,6 +134,128 @@ function asIsoDateString(value) {
   if (typeof value !== 'string') return ''
   // Keep free-form date strings for inputs, but bound length for storage safety.
   return value.slice(0, MAX_SHORT_FIELD)
+}
+
+function calendarDateFromValue(value) {
+  if (typeof value !== 'string' || !value) return ''
+  const match = value.match(/^(\d{4}-\d{2}-\d{2})/)
+  return match ? match[1] : ''
+}
+
+function earlierIso(a, b) {
+  const ta = Date.parse(a || '')
+  const tb = Date.parse(b || '')
+  if (Number.isFinite(ta) && Number.isFinite(tb)) return ta <= tb ? a : b
+  if (Number.isFinite(ta)) return a
+  if (Number.isFinite(tb)) return b
+  return a || b || ''
+}
+
+function laterIso(a, b) {
+  const ta = Date.parse(a || '')
+  const tb = Date.parse(b || '')
+  if (Number.isFinite(ta) && Number.isFinite(tb)) return ta >= tb ? a : b
+  if (Number.isFinite(ta)) return a
+  if (Number.isFinite(tb)) return b
+  return a || b || ''
+}
+
+function compareIsoAsc(a, b) {
+  const ta = Date.parse(a || '')
+  const tb = Date.parse(b || '')
+  const aOk = Number.isFinite(ta)
+  const bOk = Number.isFinite(tb)
+  if (aOk && bOk) return ta - tb
+  if (aOk) return -1
+  if (bOk) return 1
+  return 0
+}
+
+function normalizeRead(value) {
+  if (!value || typeof value !== 'object') return null
+  const startedAt = asIsoDateString(value.startedAt)
+  const finishedAt = asIsoDateString(value.finishedAt)
+  if (!startedAt && !finishedAt) return null
+  return { startedAt, finishedAt }
+}
+
+function sortReads(reads) {
+  return [...reads].sort((a, b) => (
+    compareIsoAsc(a.finishedAt, b.finishedAt) || compareIsoAsc(a.startedAt, b.startedAt)
+  ))
+}
+
+export function deriveReadBounds(reads) {
+  let startedAt = ''
+  let finishedAt = ''
+  for (const read of reads) {
+    if (read.startedAt) startedAt = earlierIso(startedAt, read.startedAt)
+    if (read.finishedAt) finishedAt = laterIso(finishedAt, read.finishedAt)
+  }
+  return { startedAt, finishedAt }
+}
+
+/** Build a reads list, migrating legacy startedAt/finishedAt into one entry. */
+function normalizeReads(value, fallbackStartedAt = '', fallbackFinishedAt = '') {
+  const listed = Array.isArray(value)
+    ? value.map(normalizeRead).filter(Boolean).slice(0, MAX_READS)
+    : []
+  if (listed.length) return sortReads(listed)
+
+  const startedAt = asIsoDateString(fallbackStartedAt)
+  const finishedAt = asIsoDateString(fallbackFinishedAt)
+  return (startedAt || finishedAt) ? [{ startedAt, finishedAt }] : []
+}
+
+function mergeReads(left, right) {
+  const byFinish = new Map()
+  let unfinished = null
+  for (const read of [...left, ...right]) {
+    if (!read.finishedAt) {
+      if (!unfinished) unfinished = { ...read }
+      else {
+        unfinished = {
+          startedAt: earlierIso(unfinished.startedAt, read.startedAt),
+          finishedAt: '',
+        }
+      }
+      continue
+    }
+    const key = calendarDateFromValue(read.finishedAt) || read.finishedAt
+    const existing = byFinish.get(key)
+    if (!existing) {
+      byFinish.set(key, { ...read })
+    } else {
+      byFinish.set(key, {
+        startedAt: earlierIso(existing.startedAt, read.startedAt),
+        finishedAt: laterIso(existing.finishedAt, read.finishedAt) || existing.finishedAt,
+      })
+    }
+  }
+  const merged = [...byFinish.values()]
+  if (unfinished) merged.push(unfinished)
+  return sortReads(merged).slice(0, MAX_READS)
+}
+
+function readThroughsOf(book) {
+  if (!book || typeof book !== 'object') return []
+  return normalizeReads(book.reads, book.startedAt, book.finishedAt)
+}
+
+/** Append a finish for today unless the latest finish is already today. */
+export function appendFinishedRead(book, today) {
+  const reads = readThroughsOf(book)
+  const latestFinish = reads.reduce((latest, read) => laterIso(latest, read.finishedAt), '')
+  if (calendarDateFromValue(latestFinish) === today) return reads
+
+  const openIndex = reads.findIndex((read) => !read.finishedAt)
+  if (openIndex >= 0) {
+    return sortReads(reads.map((read, index) => (
+      index === openIndex ? { ...read, finishedAt: today } : read
+    )))
+  }
+
+  return sortReads([...reads, { startedAt: '', finishedAt: today }]).slice(0, MAX_READS)
 }
 
 function isValidColor(color) {
@@ -231,7 +354,7 @@ export function createShelf(draft = {}, index = 0) {
   }, index)
 }
 
-function normalizeBook(value, index, defaultShelfId = DEFAULT_SHELF_ID) {
+export function normalizeBook(value, index, defaultShelfId = DEFAULT_SHELF_ID) {
   const book = value && typeof value === 'object' ? value : {}
   const pageCount = asNumber(book.pageCount)
   const shelfId = typeof book.shelfId === 'string' && book.shelfId
@@ -250,6 +373,9 @@ function normalizeBook(value, index, defaultShelfId = DEFAULT_SHELF_ID) {
   let createdAt = asIsoDateString(book.createdAt)
   if (!createdAt) createdAt = new Date().toISOString()
 
+  const reads = normalizeReads(book.reads, book.startedAt, book.finishedAt)
+  const { startedAt, finishedAt } = deriveReadBounds(reads)
+
   return {
     id,
     title,
@@ -262,8 +388,9 @@ function normalizeBook(value, index, defaultShelfId = DEFAULT_SHELF_ID) {
     pageCount,
     tags: normalizeTags(book.tags),
     quotes: normalizeQuotes(book.quotes),
-    startedAt: asIsoDateString(book.startedAt),
-    finishedAt: asIsoDateString(book.finishedAt),
+    reads,
+    startedAt,
+    finishedAt,
     isbn: isbn.slice(0, MAX_SHORT_FIELD),
     coverUrl: sanitizeCoverUrl(book.coverUrl),
     createdAt,
@@ -550,6 +677,7 @@ const BOOK_EXPORT_FIELDS = [
   'pageCount',
   'tags',
   'quotes',
+  'reads',
   'startedAt',
   'finishedAt',
   'isbn',
@@ -794,24 +922,6 @@ function normalizeMatchKey(title, author) {
   return `${clean(title)}|${clean(author)}`
 }
 
-function earlierIso(a, b) {
-  const ta = Date.parse(a || '')
-  const tb = Date.parse(b || '')
-  if (Number.isFinite(ta) && Number.isFinite(tb)) return ta <= tb ? a : b
-  if (Number.isFinite(ta)) return a
-  if (Number.isFinite(tb)) return b
-  return a || b || ''
-}
-
-function laterIso(a, b) {
-  const ta = Date.parse(a || '')
-  const tb = Date.parse(b || '')
-  if (Number.isFinite(ta) && Number.isFinite(tb)) return ta >= tb ? a : b
-  if (Number.isFinite(ta)) return a
-  if (Number.isFinite(tb)) return b
-  return a || b || ''
-}
-
 function preferNonEmpty(current, incoming) {
   if (typeof current === 'string' && current.trim()) return current
   if (typeof incoming === 'string' && incoming.trim()) return incoming
@@ -857,8 +967,7 @@ export function mergeBookRecords(current, incoming, index = 0) {
     currentPage,
     tags: normalizeTags([...(left.tags || []), ...(right.tags || [])]),
     quotes: normalizeQuotes([...(left.quotes || []), ...(right.quotes || [])]),
-    startedAt: earlierIso(left.startedAt, right.startedAt),
-    finishedAt: laterIso(left.finishedAt, right.finishedAt),
+    reads: mergeReads(left.reads, right.reads),
     createdAt: earlierIso(left.createdAt, right.createdAt) || left.createdAt,
     shelfId: left.shelfId,
     id: left.id,
@@ -1563,13 +1672,15 @@ export function computeLibraryStats(library, now = new Date()) {
       ratedCount += 1
     }
 
+    const pages = asNumber(book.pageCount)
+    const finishesThisYear = readThroughsOf(book).filter((read) => (
+      yearFromDateString(read.finishedAt) === year
+    )).length
+    finishedThisYear += finishesThisYear
+    pagesFinishedThisYear += finishesThisYear * pages
+
     if (status === 'Finished') {
-      const pages = asNumber(book.pageCount)
       pagesRead += pages
-      if (yearFromDateString(book.finishedAt) === year) {
-        finishedThisYear += 1
-        pagesFinishedThisYear += pages
-      }
     } else if (status === 'Reading') {
       pagesRead += asNumber(book.currentPage)
     }
@@ -1699,7 +1810,7 @@ export function computeGoalProgress(current, target) {
 
 /**
  * Year-scoped reading review built on the same book fields as library stats.
- * Includes monthly finishes, ratings of finished books, and prior-year count.
+ * Counts every finished read-through in that calendar year, including rereads.
  *
  * @param {unknown} library
  * @param {number | Date} [yearOrNow] calendar year, or Date (uses that year)
@@ -1718,35 +1829,35 @@ export function computeYearInReview(library, yearOrNow = new Date()) {
   let ratedCount = 0
 
   for (const book of books) {
-    const status = READING_STATUSES.includes(book.status) ? book.status : 'Want to Read'
-    if (status !== 'Finished') continue
-
-    const finishedYear = yearFromDateString(book.finishedAt)
-    if (finishedYear === year - 1) previousYearFinished += 1
-    if (finishedYear !== year) continue
-
     const pages = asNumber(book.pageCount)
-    pagesFinished += pages
     const rating = Math.min(5, Math.max(0, Math.round(Number(book.rating) || 0)))
-    ratingCounts[rating] += 1
-    if (rating > 0) {
-      ratingSum += rating
-      ratedCount += 1
+
+    for (const read of readThroughsOf(book)) {
+      const finishedYear = yearFromDateString(read.finishedAt)
+      if (finishedYear === year - 1) previousYearFinished += 1
+      if (finishedYear !== year) continue
+
+      pagesFinished += pages
+      ratingCounts[rating] += 1
+      if (rating > 0) {
+        ratingSum += rating
+        ratedCount += 1
+      }
+
+      const month = monthFromDateString(read.finishedAt)
+      if (month != null) monthlyFinished[month] += 1
+
+      finishedBooks.push({
+        id: book.id,
+        title: book.title || 'Untitled',
+        author: book.author || '',
+        rating,
+        finishedAt: read.finishedAt || '',
+        pageCount: pages,
+        coverUrl: book.coverUrl || '',
+        color: book.color || '',
+      })
     }
-
-    const month = monthFromDateString(book.finishedAt)
-    if (month != null) monthlyFinished[month] += 1
-
-    finishedBooks.push({
-      id: book.id,
-      title: book.title || 'Untitled',
-      author: book.author || '',
-      rating,
-      finishedAt: book.finishedAt || '',
-      pageCount: pages,
-      coverUrl: book.coverUrl || '',
-      color: book.color || '',
-    })
   }
 
   finishedBooks.sort((a, b) => {
@@ -1755,10 +1866,17 @@ export function computeYearInReview(library, yearOrNow = new Date()) {
     return compareText(a.title, b.title)
   })
 
-  const topRated = [...finishedBooks]
-    .filter((book) => book.rating > 0)
-    .sort((a, b) => b.rating - a.rating || compareDateDesc(a.finishedAt, b.finishedAt) || compareText(a.title, b.title))
-    .slice(0, 5)
+  const topRated = []
+  const seenTop = new Set()
+  for (const book of [...finishedBooks]
+    .filter((entry) => entry.rating > 0)
+    .sort((a, b) => b.rating - a.rating || compareDateDesc(a.finishedAt, b.finishedAt) || compareText(a.title, b.title))) {
+    const key = book.id || book.title
+    if (seenTop.has(key)) continue
+    seenTop.add(key)
+    topRated.push(book)
+    if (topRated.length >= 5) break
+  }
 
   return {
     year,

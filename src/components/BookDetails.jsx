@@ -37,6 +37,7 @@ function BookDetails({ book, shelves = [], onUpdate, onDelete, onClose, onReorde
 
   const progress = book.pageCount ? Math.min(100, Math.round((book.currentPage / book.pageCount) * 100)) : 0
   const quotes = Array.isArray(book.quotes) ? book.quotes : []
+  const reads = Array.isArray(book.reads) ? book.reads : []
 
   const removeBook = () => {
     if (window.confirm(`Remove “${book.title}” from your library?`)) onDelete()
@@ -52,6 +53,22 @@ function BookDetails({ book, shelves = [], onUpdate, onDelete, onClose, onReorde
 
   const removeQuote = (index) => {
     onUpdate({ quotes: quotes.filter((_, quoteIndex) => quoteIndex !== index) })
+  }
+
+  const updateRead = (index, field, value) => {
+    onUpdate({
+      reads: reads.map((read, readIndex) => (
+        readIndex === index ? { ...read, [field]: value } : read
+      )),
+    })
+  }
+
+  const addRead = () => {
+    onUpdate({ reads: [...reads, { startedAt: '', finishedAt: '' }] })
+  }
+
+  const removeRead = (index) => {
+    onUpdate({ reads: reads.filter((_, readIndex) => readIndex !== index) })
   }
 
   return (
@@ -211,15 +228,77 @@ function BookDetails({ book, shelves = [], onUpdate, onDelete, onClose, onReorde
           {book.pageCount > 0 && <div aria-hidden="true" style={{ height: 4, overflow: 'hidden', marginTop: 8, borderRadius: 99, background: 'rgba(255,255,255,0.13)' }}><div style={{ width: `${progress}%`, height: '100%', borderRadius: 99, background: book.color }} /></div>}
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-          <div>
-            <label htmlFor="book-started" style={labelStyle}>Started</label>
-            <input id="book-started" type="date" value={book.startedAt} onChange={(event) => onUpdate({ startedAt: event.target.value })} style={{ ...fieldStyle, height: 40, padding: '0 8px', colorScheme: 'dark' }} />
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 7 }}>
+            <label style={{ ...labelStyle, marginBottom: 0 }}>Read-throughs</label>
+            <button
+              type="button"
+              onClick={addRead}
+              style={{
+                border: '1px solid rgba(255,255,255,0.12)',
+                borderRadius: 8,
+                color: '#fff',
+                background: 'rgba(255,255,255,0.08)',
+                cursor: 'pointer',
+                padding: '5px 8px',
+                font: `600 11px ${fontFamily}`,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              + Add read
+            </button>
           </div>
-          <div>
-            <label htmlFor="book-finished" style={labelStyle}>Finished</label>
-            <input id="book-finished" type="date" value={book.finishedAt} onChange={(event) => onUpdate({ finishedAt: event.target.value })} style={{ ...fieldStyle, height: 40, padding: '0 8px', colorScheme: 'dark' }} />
-          </div>
+          {reads.length === 0 ? (
+            <p style={{ margin: 0, color: 'rgba(255,255,255,0.42)', fontSize: 12, lineHeight: 1.4 }}>
+              Track each time you start or finish this book.
+            </p>
+          ) : (
+            <div style={{ display: 'grid', gap: 8 }}>
+              {reads.map((read, index) => (
+                <div key={`read-${index}`} style={{ display: 'grid', gap: 6 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                    <div>
+                      <label htmlFor={index === 0 ? 'book-started' : `book-read-started-${index}`} style={labelStyle}>Started</label>
+                      <input
+                        id={index === 0 ? 'book-started' : `book-read-started-${index}`}
+                        type="date"
+                        value={read.startedAt || ''}
+                        onChange={(event) => updateRead(index, 'startedAt', event.target.value)}
+                        style={{ ...fieldStyle, height: 40, padding: '0 8px', colorScheme: 'dark' }}
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor={index === 0 ? 'book-finished' : `book-read-finished-${index}`} style={labelStyle}>Finished</label>
+                      <input
+                        id={index === 0 ? 'book-finished' : `book-read-finished-${index}`}
+                        type="date"
+                        value={read.finishedAt || ''}
+                        onChange={(event) => updateRead(index, 'finishedAt', event.target.value)}
+                        style={{ ...fieldStyle, height: 40, padding: '0 8px', colorScheme: 'dark' }}
+                      />
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                    <button
+                      type="button"
+                      onClick={() => removeRead(index)}
+                      style={{
+                        border: '1px solid rgba(255,130,130,0.28)',
+                        borderRadius: 8,
+                        color: '#ffb3b3',
+                        background: 'rgba(255,80,80,0.08)',
+                        cursor: 'pointer',
+                        padding: '5px 8px',
+                        font: `600 11px ${fontFamily}`,
+                      }}
+                    >
+                      Remove read
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         <div>

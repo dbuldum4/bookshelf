@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   addEmptyShelf,
+  appendFinishedRead,
   applyRoomPreset,
   applyShelfTransform,
   booksFitOnShelf,
   booksOnShelf,
   bookWorldFocusPosition,
+  buildLibraryExport,
   buildShelfBooks,
   buildShelfCaseLayout,
   clampShelvesToRoom,
@@ -27,6 +29,7 @@ import {
   normalizeReadingGoals,
   mergeBookRecords,
   mergeLibraryStates,
+  normalizeBook,
   mergeNotes,
   normalizeLibraryState,
   parseLibraryCsv,
@@ -446,6 +449,37 @@ describe('library sort and stats', () => {
     expect(review.topRated.map((book) => book.title)).toEqual(['Alpha', 'Beta', 'Gamma'])
   })
 
+  it('counts every finish in year-in-review across years', () => {
+    const books = [{
+      id: 'dune',
+      title: 'Dune',
+      author: 'Frank Herbert',
+      status: 'Finished',
+      pageCount: 400,
+      rating: 5,
+      reads: [
+        { startedAt: '2024-01-01', finishedAt: '2024-03-15' },
+        { startedAt: '2025-01-01', finishedAt: '2025-02-10' },
+        { startedAt: '2026-06-01', finishedAt: '2026-07-04' },
+        { startedAt: '2026-10-01', finishedAt: '2026-11-20' },
+      ],
+    }]
+
+    const review2026 = computeYearInReview(books, 2026)
+    expect(review2026.finishedCount).toBe(2)
+    expect(review2026.pagesFinished).toBe(800)
+    expect(review2026.previousYearFinished).toBe(1)
+    expect(review2026.monthlyFinished[6]).toBe(1)
+    expect(review2026.monthlyFinished[10]).toBe(1)
+    expect(review2026.books.map((book) => book.finishedAt)).toEqual(['2026-11-20', '2026-07-04'])
+
+    const review2024 = computeYearInReview(books, 2024)
+    expect(review2024.finishedCount).toBe(1)
+    expect(review2024.pagesFinished).toBe(400)
+    expect(review2024.previousYearFinished).toBe(0)
+    expect(review2024.monthlyFinished[2]).toBe(1)
+  })
+
   it('treats stored calendar dates as calendar dates in negative UTC offsets', () => {
     const originalTimezone = process.env.TZ
     process.env.TZ = 'America/New_York'
@@ -660,6 +694,102 @@ describe('csv and json import', () => {
     expect(result.books[1].isbn).toBe('')
     expect(result.books[2].isbn).toBe('')
     expect(result.books[3].isbn).toBe('')
+  })
+})
+
+describe('rereads', () => {
+  it('migrates legacy single dates into one reads entry', () => {
+    const book = normalizeBook({
+      title: 'Dune',
+      author: 'Frank Herbert',
+      startedAt: '2020-01-10',
+      finishedAt: '2020-03-02',
+    }, 0)
+
+    expect(book.reads).toEqual([{ startedAt: '2020-01-10', finishedAt: '2020-03-02' }])
+    expect(book.startedAt).toBe('2020-01-10')
+    expect(book.finishedAt).toBe('2020-03-02')
+  })
+
+  it('keeps startedAt as earliest start and finishedAt as latest finish', () => {
+    const book = normalizeBook({
+      title: 'Dune',
+      author: 'Frank Herbert',
+      reads: [
+        { startedAt: '2022-05-01', finishedAt: '2022-06-01' },
+        { startedAt: '2020-01-01', finishedAt: '2020-02-01' },
+      ],
+    }, 0)
+
+    expect(book.startedAt).toBe('2020-01-01')
+    expect(book.finishedAt).toBe('2022-06-01')
+    expect(book.reads).toEqual([
+      { startedAt: '2020-01-01', finishedAt: '2020-02-01' },
+      { startedAt: '2022-05-01', finishedAt: '2022-06-01' },
+    ])
+  })
+
+  it('unions reads by finishedAt when merging book records', () => {
+    const merged = mergeBookRecords(
+      {
+        id: '1',
+        title: 'T',
+        author: 'A',
+        reads: [
+          { startedAt: '2020-01-01', finishedAt: '2020-02-01' },
+          { startedAt: '2022-01-01', finishedAt: '2022-02-01' },
+        ],
+      },
+      {
+        id: '1',
+        title: 'T',
+        author: 'A',
+        reads: [
+          { startedAt: '2020-01-15', finishedAt: '2020-02-01' },
+          { startedAt: '2024-01-01', finishedAt: '2024-03-01' },
+        ],
+      },
+    )
+
+    expect(merged.reads).toEqual([
+      { startedAt: '2020-01-01', finishedAt: '2020-02-01' },
+      { startedAt: '2022-01-01', finishedAt: '2022-02-01' },
+      { startedAt: '2024-01-01', finishedAt: '2024-03-01' },
+    ])
+    expect(merged.startedAt).toBe('2020-01-01')
+    expect(merged.finishedAt).toBe('2024-03-01')
+  })
+
+  it('exports reads with the library snapshot', () => {
+    const payload = buildLibraryExport({
+      books: [{
+        title: 'Dune',
+        author: 'Frank Herbert',
+        startedAt: '2020-01-01',
+        finishedAt: '2020-02-01',
+      }],
+      shelves: [createDefaultShelf()],
+    })
+
+    expect(payload.books[0].reads).toEqual([
+      { startedAt: '2020-01-01', finishedAt: '2020-02-01' },
+    ])
+    expect(payload.books[0].startedAt).toBe('2020-01-01')
+    expect(payload.books[0].finishedAt).toBe('2020-02-01')
+  })
+
+  it('appends a finish only when the latest is not already today', () => {
+    expect(appendFinishedRead({
+      reads: [{ startedAt: '2026-01-01', finishedAt: '2026-08-17' }],
+    }, '2026-08-17')).toEqual([
+      { startedAt: '2026-01-01', finishedAt: '2026-08-17' },
+    ])
+    expect(appendFinishedRead({
+      reads: [{ startedAt: '2025-01-01', finishedAt: '2025-03-01' }],
+    }, '2026-08-17')).toEqual([
+      { startedAt: '2025-01-01', finishedAt: '2025-03-01' },
+      { startedAt: '', finishedAt: '2026-08-17' },
+    ])
   })
 })
 
