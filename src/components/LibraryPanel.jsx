@@ -14,6 +14,7 @@ import {
   searchAcclaimedBooks,
   sortLibrary,
 } from '../library'
+import { downloadYearInReviewImage } from '../yearInReviewImage'
 
 const fontFamily =
   '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif'
@@ -398,6 +399,19 @@ function LibraryPanel({
       showTransferFeedback(`Exported ${count} book${count === 1 ? '' : 's'} to ${filename}.`)
     } catch (error) {
       showTransferFeedback(error instanceof Error ? error.message : 'Could not export your library.', true)
+    }
+  }
+
+  const downloadReviewImage = () => {
+    clearTransferFeedback()
+    try {
+      const { filename } = downloadYearInReviewImage(library, readingStats.year)
+      showTransferFeedback(`Downloaded ${filename}.`)
+    } catch (error) {
+      showTransferFeedback(
+        error instanceof Error ? error.message : 'Could not download the year-in-review image.',
+        true,
+      )
     }
   }
 
@@ -927,6 +941,15 @@ function LibraryPanel({
                 </ul>
               </div>
             )}
+
+            <button
+              type="button"
+              aria-label={`Download ${readingStats.year} year-in-review image`}
+              onClick={downloadReviewImage}
+              style={{ ...actionButton(), width: '100%', fontSize: 12 }}
+            >
+              Download share image
+            </button>
           </div>
         )}
       </div>
