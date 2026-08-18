@@ -1332,11 +1332,13 @@ export function parseLibraryCsv(text) {
     const tags = splitBookshelfTokens(cell(row, ['bookshelves', 'tags']))
       .filter((tag) => !matchGoodreadsShelf(tag))
 
-    // First non-status token owns the book; every unique token still gets a case.
+    // Only the first usable token becomes a case — extras stay tags so empty
+    // secondary cases do not eat 9-unit x slots and walk off the room.
     let shelfId = DEFAULT_SHELF_ID
     for (const token of tags) {
+      if (shelfId !== DEFAULT_SHELF_ID) break
       const caseId = ensureNamedCase(token)
-      if (caseId && shelfId === DEFAULT_SHELF_ID) shelfId = caseId
+      if (caseId) shelfId = caseId
     }
 
     const draft = {
@@ -1371,9 +1373,11 @@ export function parseLibraryCsv(text) {
     books,
     shelves: [createDefaultShelf(), ...namedCases],
   })
+  // 9-unit case slots walk past ±38 walk bounds once a few named cases exist.
+  const clamped = clampShelvesToRoom(fitted.shelves)
   return {
     books: fitted.books,
-    shelves: fitted.shelves,
+    shelves: clamped.shelves,
     count: fitted.books.length,
     format: 'csv',
     version: null,

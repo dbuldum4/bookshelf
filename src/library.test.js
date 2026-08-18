@@ -546,7 +546,8 @@ describe('csv and json import', () => {
       shelfId: 'gr-sci-fi',
     }))
     expect(result.shelves.find((shelf) => shelf.id === 'gr-sci-fi')?.name).toBe('Sci Fi')
-    expect(result.shelves.some((shelf) => shelf.id === 'gr-classics')).toBe(true)
+    // Secondary token stays a tag; it must not spawn an empty classics case.
+    expect(result.shelves.some((shelf) => shelf.id === 'gr-classics')).toBe(false)
     expect(result.books[1].status).toBe('Want to Read')
     expect(result.books[1].shelfId).toBe('gr-tbr')
     expect(result.books[2].status).toBe('Reading')
@@ -670,14 +671,26 @@ describe('csv and json import', () => {
     expect(book.tags).toEqual(['fantasy', 'le-guin'])
     expect(book.shelfId).toBe('gr-fantasy')
 
-    const fantasy = result.shelves.find((shelf) => shelf.id === 'gr-fantasy')
-    expect(fantasy).toMatchObject({ id: 'gr-fantasy', name: 'Fantasy' })
-    expect(result.shelves.find((shelf) => shelf.id === 'gr-le-guin')).toMatchObject({
-      id: 'gr-le-guin',
-      name: 'Le Guin',
-    })
+    const named = result.shelves.filter((shelf) => shelf.id !== DEFAULT_SHELF_ID)
+    expect(named).toHaveLength(1)
+    expect(named[0]).toMatchObject({ id: 'gr-fantasy', name: 'Fantasy' })
     expect(result.shelves[0]).toMatchObject({ id: DEFAULT_SHELF_ID, name: 'Library' })
+    expect(result.shelves.some((shelf) => shelf.id === 'gr-le-guin')).toBe(false)
     expect(result.shelves.some((shelf) => shelf.id === 'gr-to-read')).toBe(false)
+  })
+
+  it('clamps many Goodreads named cases inside walk bounds', () => {
+    const rows = Array.from({ length: 12 }, (_, index) => (
+      `"Book ${index}","Author ${index}",to-read,"shelf-${index}"`
+    ))
+    const csv = ['Title,Author,Exclusive Shelf,Bookshelves', ...rows].join('\n')
+
+    const result = parseLibraryCsv(csv)
+    expect(result.shelves).toHaveLength(13)
+    for (const shelf of result.shelves) {
+      expect(Math.abs(shelf.x)).toBeLessThanOrEqual(ROOM_LAYOUT_BOUND)
+      expect(Math.abs(shelf.z)).toBeLessThanOrEqual(ROOM_LAYOUT_BOUND)
+    }
   })
 
   it('leaves JSON import shelves unchanged by book tags', () => {
