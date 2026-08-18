@@ -43,6 +43,7 @@ function Scene({
   resetKey,
   galaxyMode,
   graphics: graphicsProp,
+  graphicsQuality = DEFAULT_GRAPHICS_QUALITY,
   reducedMotion = false,
   library,
   shelves,
@@ -95,6 +96,7 @@ function Scene({
       onShelfDragChange={handleShelfDragChange}
       onReorderBookToIndex={onReorderBookToIndex}
       onBookDragChange={handleBookDragChange}
+      graphicsQuality={graphicsQuality}
     />
   )
 
@@ -171,6 +173,7 @@ function Scene({
               mode={mode}
               library={library}
               shelves={shelves}
+              graphicsQuality={graphicsQuality}
             />
           </Physics>
         </Suspense>

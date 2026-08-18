@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import { CuboidCollider, RigidBody } from '@react-three/rapier'
 import * as THREE from 'three'
@@ -8,6 +8,14 @@ import {
   insertionIndexFromLocalPoint,
   shelfRowYs,
 } from '../library'
+import {
+  bucketInstancedSpines,
+  countCoverlessBooks,
+  disposeSpineInstanceResources,
+  partitionRowBooksForLod,
+  shouldInstanceCoverlessSpines,
+  spineStatusColor,
+} from './instancedSpines'
 import { lockLook, unlockLook } from './lookLock'
 
 function makeCaseLabelTexture(name, selected = false, aspect = 4) {
@@ -358,6 +366,134 @@ function BookMesh({ book }) {
   )
 }
 
+const instanceDummy = new THREE.Object3D()
+const instanceStatusColor = new THREE.Color()
+
+function InstancedSpineBucket({
+  books,
+  color,
+  width,
+  height,
+  depth,
+  interactive,
+  reorderable,
+  selectedBookId,
+  onSelect,
+  onReorderPointerDown,
+}) {
+  const meshRef = useRef()
+  const ribbonRef = useRef()
+  const { gl } = useThree()
+  const count = books.length
+
+  const geometry = useMemo(
+    () => new THREE.BoxGeometry(width, height, depth),
+    [width, height, depth],
+  )
+  const material = useMemo(() => new THREE.MeshStandardMaterial({
+    color,
+    roughness: 0.62,
+    metalness: 0.04,
+  }), [color])
+  const ribbonGeometry = useMemo(
+    () => new THREE.BoxGeometry(Math.max(0.04, width * 0.9), 0.05, 0.016),
+    [width],
+  )
+  const ribbonMaterial = useMemo(() => new THREE.MeshStandardMaterial({
+    roughness: 0.45,
+    metalness: 0.08,
+  }), [])
+
+  useEffect(() => () => {
+    disposeSpineInstanceResources([geometry, material, ribbonGeometry, ribbonMaterial])
+  }, [geometry, material, ribbonGeometry, ribbonMaterial])
+
+  useLayoutEffect(() => {
+    const mesh = meshRef.current
+    const ribbon = ribbonRef.current
+    if (!mesh || count === 0) return
+
+    for (let i = 0; i < count; i += 1) {
+      const book = books[i]
+      const [x, y, z = 0] = book.position || [0, 0, 0]
+      const sx = width > 0 ? (book.width || width) / width : 1
+      const sy = height > 0 ? (book.height || height) / height : 1
+      const sz = depth > 0 ? (book.depth || depth) / depth : 1
+      instanceDummy.position.set(x, y, z)
+      instanceDummy.rotation.set(0, 0, book.tilt || 0)
+      instanceDummy.scale.set(sx, sy, sz)
+      instanceDummy.updateMatrix()
+      mesh.setMatrixAt(i, instanceDummy.matrix)
+
+      if (ribbon) {
+        const bookH = book.height || height
+        const bookD = book.depth || depth
+        instanceDummy.position.set(x, y + bookH * 0.42, z + bookD * 0.5 + 0.01)
+        instanceDummy.scale.set(sx, 1, 1)
+        instanceDummy.updateMatrix()
+        ribbon.setMatrixAt(i, instanceDummy.matrix)
+        const status = spineStatusColor(book.status)
+        instanceStatusColor.set(status || color)
+        ribbon.setColorAt(i, instanceStatusColor)
+      }
+    }
+
+    mesh.count = count
+    mesh.instanceMatrix.needsUpdate = true
+    mesh.computeBoundingSphere()
+    if (ribbon) {
+      ribbon.count = count
+      ribbon.instanceMatrix.needsUpdate = true
+      if (ribbon.instanceColor) ribbon.instanceColor.needsUpdate = true
+      ribbon.computeBoundingSphere()
+    }
+  }, [books, color, count, depth, height, width])
+
+  if (count === 0) return null
+
+  const bookFromEvent = (event) => {
+    const index = event.instanceId
+    if (!Number.isInteger(index)) return null
+    return books[index] || null
+  }
+
+  return (
+    <>
+      <instancedMesh
+        ref={meshRef}
+        args={[geometry, material, count]}
+        castShadow
+        receiveShadow
+        onClick={interactive ? (event) => {
+          event.stopPropagation()
+          const book = bookFromEvent(event)
+          if (!book) return
+          onSelect(selectedBookId === book.id ? null : book.id)
+        } : undefined}
+        onPointerDown={reorderable && onReorderPointerDown ? (event) => {
+          const book = bookFromEvent(event)
+          if (!book) return
+          onReorderPointerDown(event, book)
+        } : undefined}
+        onPointerOver={interactive || reorderable ? (event) => {
+          event.stopPropagation()
+          gl.domElement.style.cursor = reorderable ? 'grab' : 'pointer'
+        } : undefined}
+        onPointerOut={interactive || reorderable ? () => {
+          gl.domElement.style.cursor = 'auto'
+        } : undefined}
+      />
+      <instancedMesh
+        ref={ribbonRef}
+        args={[ribbonGeometry, ribbonMaterial, count]}
+        castShadow={false}
+        receiveShadow={false}
+        raycast={() => {}}
+      />
+    </>
+  )
+}
+
 const REORDER_DRAG_THRESHOLD_PX = 8
 
 function Book({
@@ -609,8 +745,22 @@ function ShelfRow({
   reorderable,
   reorderState,
   onReorderPointerDown,
+  instanceCoverless = false,
 }) {
   const plankWidth = width || DEFAULT_SHELF_WIDTH
+  const reorderSourceId = reorderState?.active ? reorderState.bookId : null
+  const { unique, instanced } = useMemo(
+    () => partitionRowBooksForLod(books, {
+      instanceCoverless: instanceCoverless && mode !== 'play',
+      selectedBookId,
+      reorderSourceId,
+    }),
+    [books, instanceCoverless, mode, reorderSourceId, selectedBookId],
+  )
+  const instancedBuckets = useMemo(
+    () => bucketInstancedSpines(instanced),
+    [instanced],
+  )
 
   return (
     <group position={[0, y, 0]}>
@@ -628,31 +778,48 @@ function ShelfRow({
           args={[plankWidth / 2, 0.12, 0.7]}
         />
       )}
-      {books.map((b) =>
-        mode === 'play' ? (
-          <PhysicsBook key={b.id} book={b} mode={mode} />
-        ) : (
-          <Book
-            key={b.id}
-            book={b}
-            selected={selectedBookId === b.id}
-            onSelect={onSelectBook}
-            interactive={interactiveBooks}
-            reorderable={reorderable}
-            isReorderSource={reorderState?.bookId === b.id && reorderState?.active}
-            dragLift={
-              reorderState?.bookId === b.id && reorderState?.active
-                ? {
-                    x: reorderState.localX,
-                    y: reorderState.localY - y,
-                    z: 0.95,
-                  }
-                : null
-            }
-            onReorderPointerDown={onReorderPointerDown}
-          />
-        )
-      )}
+      {mode === 'play'
+        ? books.map((b) => <PhysicsBook key={b.id} book={b} mode={mode} />)
+        : (
+          <>
+            {unique.map((b) => (
+              <Book
+                key={b.id}
+                book={b}
+                selected={selectedBookId === b.id}
+                onSelect={onSelectBook}
+                interactive={interactiveBooks}
+                reorderable={reorderable}
+                isReorderSource={reorderState?.bookId === b.id && reorderState?.active}
+                dragLift={
+                  reorderState?.bookId === b.id && reorderState?.active
+                    ? {
+                        x: reorderState.localX,
+                        y: reorderState.localY - y,
+                        z: 0.95,
+                      }
+                    : null
+                }
+                onReorderPointerDown={onReorderPointerDown}
+              />
+            ))}
+            {instancedBuckets.map((bucket) => (
+              <InstancedSpineBucket
+                key={bucket.key}
+                books={bucket.books}
+                color={bucket.color}
+                width={bucket.width}
+                height={bucket.height}
+                depth={bucket.depth}
+                interactive={interactiveBooks}
+                reorderable={reorderable}
+                selectedBookId={selectedBookId}
+                onSelect={onSelectBook}
+                onReorderPointerDown={onReorderPointerDown}
+              />
+            ))}
+          </>
+        )}
     </group>
   )
 }
@@ -677,6 +844,7 @@ function BookshelfCase({
   onShelfDragChange,
   onReorderBookToIndex,
   onBookDragChange,
+  instanceCoverless = false,
 }) {
   const woodTex = useWoodTexture()
   const woodTex2 = useWoodTexture()
@@ -1028,6 +1196,7 @@ function BookshelfCase({
             reorderable={reorderable}
             reorderState={reorderState}
             onReorderPointerDown={onReorderPointerDown}
+            instanceCoverless={instanceCoverless}
           />
         ))}
 
@@ -1061,9 +1230,17 @@ function Bookshelf({
   onShelfDragChange,
   onReorderBookToIndex,
   onBookDragChange,
+  graphicsQuality,
 }) {
   const cases = Array.isArray(shelves) ? shelves : []
   const books = Array.isArray(library) ? library : []
+  // >80 unique coverless BookMeshes (canvas title + 6 materials each) is
+  // where draw/upload cost starts to hitch; low quality instances immediately.
+  const instanceCoverless = shouldInstanceCoverlessSpines({
+    coverlessCount: countCoverlessBooks(books),
+    graphicsQuality,
+    mode,
+  })
 
   return (
     <group>
@@ -1081,6 +1258,7 @@ function Bookshelf({
           onShelfDragChange={onShelfDragChange}
           onReorderBookToIndex={onReorderBookToIndex}
           onBookDragChange={onBookDragChange}
+          instanceCoverless={instanceCoverless}
         />
       ))}
 

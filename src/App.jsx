@@ -663,6 +663,7 @@ export default function App() {
                   resetKey={resetKey}
                   galaxyMode={galaxyMode}
                   graphics={graphics}
+                  graphicsQuality={graphicsQuality}
                   reducedMotion={reducedMotion}
                   library={library}
                   shelves={shelves}
