@@ -8,6 +8,14 @@ import {
   insertionIndexFromLocalPoint,
   shelfRowYs,
 } from '../library'
+import {
+  LECTERN_DESK_TILT,
+  LECTERN_POSITION,
+  lecternBookLayout,
+  lecternDeskWidth,
+  lecternShouldWobble,
+  shouldShowLectern,
+} from './lectern'
 import { lockLook, unlockLook } from './lookLock'
 
 function makeCaseLabelTexture(name, selected = false, aspect = 4) {
@@ -1049,6 +1057,161 @@ function BookshelfCase({
   )
 }
 
+function LecternOpenBook({
+  book,
+  slot,
+  selected,
+  onSelect,
+  interactive,
+}) {
+  const groupRef = useRef()
+  const { gl } = useThree()
+  const coverColor = book.color || '#6a3d8a'
+  const coverImage = useCoverImage(book.coverUrl)
+  const coverTex = useMemo(
+    () => makeCoverFaceTexture({ color: coverColor, coverImage }),
+    [coverColor, coverImage],
+  )
+
+  useEffect(() => () => coverTex.dispose(), [coverTex])
+
+  useFrame((_, delta) => {
+    if (!groupRef.current) return
+    const target = selected ? 1.08 : 1
+    const scale = THREE.MathUtils.damp(groupRef.current.scale.x, target, 8, delta)
+    groupRef.current.scale.setScalar(scale)
+  })
+
+  const height = slot.height
+  const depth = slot.depth
+  const open = slot.openAngle
+
+  return (
+    <group
+      ref={groupRef}
+      position={slot.position}
+      rotation={slot.rotation}
+      onClick={interactive ? (event) => {
+        event.stopPropagation()
+        onSelect(selected ? null : book.id)
+      } : undefined}
+      onPointerOver={interactive ? (event) => {
+        event.stopPropagation()
+        gl.domElement.style.cursor = 'pointer'
+      } : undefined}
+      onPointerOut={interactive ? () => {
+        gl.domElement.style.cursor = 'auto'
+      } : undefined}
+    >
+      <mesh position={[-0.055, height / 2, 0]} rotation={[0, open, 0]} castShadow receiveShadow>
+        <boxGeometry args={[0.03, height, depth]} />
+        <meshStandardMaterial map={coverTex} roughness={0.62} metalness={0.03} />
+      </mesh>
+      <mesh position={[0.055, height / 2, 0]} rotation={[0, -open, 0]} castShadow receiveShadow>
+        <boxGeometry args={[0.03, height, depth]} />
+        <meshStandardMaterial color={shade(coverColor, -0.12)} roughness={0.72} metalness={0.04} />
+      </mesh>
+      <mesh position={[0, height / 2, 0.01]} castShadow>
+        <boxGeometry args={[0.08, height - 0.04, depth - 0.06]} />
+        <meshStandardMaterial color="#e8dcc4" roughness={0.88} metalness={0} />
+      </mesh>
+    </group>
+  )
+}
+
+function LecternWobble({ reducedMotion, children }) {
+  const ref = useRef()
+  const wobble = lecternShouldWobble(reducedMotion)
+
+  useFrame((state) => {
+    if (!ref.current) return
+    if (!wobble) {
+      ref.current.position.y = 0
+      ref.current.rotation.y = 0
+      return
+    }
+    const t = state.clock.elapsedTime
+    ref.current.position.y = Math.sin(t * 0.85) * 0.025
+    ref.current.rotation.y = Math.sin(t * 0.55) * 0.035
+  })
+
+  return <group ref={ref}>{children}</group>
+}
+
+function NowReadingLectern({
+  library,
+  selectedBookId,
+  onSelectBook,
+  reducedMotion,
+}) {
+  const woodTex = useWoodTexture()
+  const slots = useMemo(() => lecternBookLayout(library), [library])
+  const deskWidth = lecternDeskWidth(slots.length)
+  const interactive = typeof onSelectBook === 'function'
+  const plaqueTex = useMemo(() => makeCaseLabelTexture('Now reading', false, 4.4), [])
+
+  useEffect(() => () => plaqueTex.dispose(), [plaqueTex])
+
+  return (
+    <group name="now-reading-lectern" position={LECTERN_POSITION}>
+      <LecternWobble reducedMotion={reducedMotion}>
+        <mesh position={[0, -0.42, 0]} castShadow receiveShadow>
+          <boxGeometry args={[1.18, 0.16, 0.92]} />
+          <meshStandardMaterial map={woodTex} roughness={0.48} metalness={0.05} />
+        </mesh>
+        <mesh position={[0, 0.1, 0.02]} castShadow receiveShadow>
+          <boxGeometry args={[0.28, 0.9, 0.28]} />
+          <meshStandardMaterial map={woodTex} roughness={0.5} metalness={0.04} />
+        </mesh>
+        <mesh position={[0, 0.46, -0.18]} rotation={[0.55, 0, 0]} castShadow receiveShadow>
+          <boxGeometry args={[0.16, 0.58, 0.1]} />
+          <meshStandardMaterial map={woodTex} roughness={0.5} metalness={0.04} />
+        </mesh>
+        <mesh
+          position={[0, 0.66, 0.08]}
+          rotation={[-LECTERN_DESK_TILT, 0, 0]}
+          castShadow
+          receiveShadow
+        >
+          <boxGeometry args={[deskWidth, 0.09, 0.94]} />
+          <meshStandardMaterial map={woodTex} roughness={0.45} metalness={0.05} />
+        </mesh>
+        <mesh
+          position={[0, 0.52, 0.44]}
+          rotation={[-LECTERN_DESK_TILT, 0, 0]}
+          castShadow
+        >
+          <boxGeometry args={[deskWidth + 0.04, 0.07, 0.08]} />
+          <meshStandardMaterial map={woodTex} roughness={0.5} color="#d4b896" />
+        </mesh>
+        <group position={[0, 0.38, 0.3]} rotation={[-0.12, 0, 0]}>
+          <mesh castShadow>
+            <boxGeometry args={[1.08, 0.22, 0.06]} />
+            <meshStandardMaterial color="#4a3220" roughness={0.7} />
+          </mesh>
+          <mesh position={[0, 0, 0.034]}>
+            <planeGeometry args={[0.98, 0.16]} />
+            <meshStandardMaterial map={plaqueTex} roughness={0.55} metalness={0.05} />
+          </mesh>
+        </group>
+
+        <group position={[0, 0.74, 0.04]} rotation={[-LECTERN_DESK_TILT, 0, 0]}>
+          {slots.map((slot) => (
+            <LecternOpenBook
+              key={slot.id}
+              book={slot.book}
+              slot={slot}
+              selected={selectedBookId === slot.id}
+              onSelect={onSelectBook}
+              interactive={interactive}
+            />
+          ))}
+        </group>
+      </LecternWobble>
+    </group>
+  )
+}
+
 function Bookshelf({
   mode,
   library,
@@ -1061,9 +1224,11 @@ function Bookshelf({
   onShelfDragChange,
   onReorderBookToIndex,
   onBookDragChange,
+  reducedMotion = false,
 }) {
   const cases = Array.isArray(shelves) ? shelves : []
   const books = Array.isArray(library) ? library : []
+  const showLectern = shouldShowLectern(mode, books)
 
   return (
     <group>
@@ -1083,6 +1248,15 @@ function Bookshelf({
           onBookDragChange={onBookDragChange}
         />
       ))}
+
+      {showLectern && (
+        <NowReadingLectern
+          library={books}
+          selectedBookId={selectedBookId}
+          onSelectBook={onSelectBook}
+          reducedMotion={reducedMotion}
+        />
+      )}
 
       {mode === 'play' && (
         // Visual floor at y=-0.5; half-extent 0.5 → top surface at -0.5 when center is -1.0
