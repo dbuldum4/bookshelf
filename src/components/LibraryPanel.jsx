@@ -7,12 +7,15 @@ import {
   LIBRARY_SORT_OPTIONS,
   loadReadingGoals,
   lookupBookByIsbn,
+  lookupBookByTitleAuthor,
+  mergeBlankBookMetadata,
   normalizeReadingGoals,
   parseLibraryFile,
   READING_STATUSES,
   saveReadingGoals,
   searchAcclaimedBooks,
   sortLibrary,
+  wait,
 } from '../library'
 
 const fontFamily =
@@ -130,6 +133,9 @@ const MAX_IMPORT_BYTES = 5_000_000
 
 function CoverThumb({ coverUrl, color }) {
   const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    setFailed(false)
+  }, [coverUrl])
   if (!coverUrl || failed) {
     return (
       <span
@@ -167,6 +173,7 @@ function LibraryPanel({
   onMergeLibrary,
   onReorderBook,
   onBackupExported,
+  onUpdateBook,
 }) {
   const [open, setOpen] = useState(true)
   const [adding, setAdding] = useState(false)
@@ -199,6 +206,8 @@ function LibraryPanel({
   const importInputRef = useRef(null)
   const transferTimer = useRef(null)
   const isbnRequestId = useRef(0)
+  const fillAbortRef = useRef(null)
+  const [fillingCovers, setFillingCovers] = useState(false)
 
   const clearTransferFeedback = () => {
     setTransferMessage('')
@@ -382,6 +391,7 @@ function LibraryPanel({
   useEffect(() => () => {
     if (blurTimer.current !== null) window.clearTimeout(blurTimer.current)
     if (transferTimer.current !== null) window.clearTimeout(transferTimer.current)
+    fillAbortRef.current?.abort()
   }, [])
 
   const changeDraft = (field, value) => setDraft((current) => ({ ...current, [field]: value }))
@@ -525,6 +535,76 @@ function LibraryPanel({
       setShowSuggestions(false)
       blurTimer.current = null
     }, 150)
+  }
+
+  const cancelFillCovers = () => {
+    fillAbortRef.current?.abort()
+  }
+
+  const fillMissingCovers = async () => {
+    if (fillingCovers || typeof onUpdateBook !== 'function') return
+    const missing = library.filter((book) => !book.coverUrl)
+    if (!missing.length) {
+      showTransferFeedback('Every book already has a cover.')
+      return
+    }
+
+    const controller = new AbortController()
+    fillAbortRef.current = controller
+    setFillingCovers(true)
+    let filled = 0
+    let stopped = false
+
+    try {
+      for (let index = 0; index < missing.length; index += 1) {
+        if (controller.signal.aborted) {
+          stopped = true
+          break
+        }
+        const book = missing[index]
+        try {
+          const result = await lookupBookByTitleAuthor(book.title, book.author, controller.signal)
+          if (controller.signal.aborted) {
+            stopped = true
+            break
+          }
+          const updates = mergeBlankBookMetadata(book, result)
+          if (updates.coverUrl) {
+            onUpdateBook(book.id, updates)
+            filled += 1
+          }
+        } catch (error) {
+          if (error?.name === 'AbortError' || controller.signal.aborted) {
+            stopped = true
+            break
+          }
+        }
+        if (index < missing.length - 1 && !controller.signal.aborted) {
+          try {
+            await wait(200, controller.signal)
+          } catch (error) {
+            if (error?.name === 'AbortError' || controller.signal.aborted) {
+              stopped = true
+              break
+            }
+          }
+        }
+      }
+    } catch (error) {
+      if (error?.name !== 'AbortError') {
+        showTransferFeedback(error instanceof Error ? error.message : 'Could not fill missing covers.', true)
+        return
+      }
+      stopped = true
+    } finally {
+      setFillingCovers(false)
+      fillAbortRef.current = null
+    }
+
+    const countLabel = `${filled} cover${filled === 1 ? '' : 's'}`
+    showTransferFeedback(stopped
+      ? `Stopped after filling ${countLabel}.`
+      : `Filled ${countLabel}.`)
   }
 
   const findByIsbn = async () => {
@@ -1063,6 +1143,23 @@ function LibraryPanel({
           style={{ display: 'none' }}
         />
       </div>
+
+      {typeof onUpdateBook === 'function' && (
+        <div style={{ display: 'flex', gap: 8, padding: '0 16px 10px' }}>
+          <button
+            type="button"
+            onClick={fillingCovers ? cancelFillCovers : fillMissingCovers}
+            disabled={!fillingCovers && !library.some((book) => !book.coverUrl)}
+            style={{
+              ...actionButton(fillingCovers),
+              flex: 1,
+              opacity: fillingCovers || library.some((book) => !book.coverUrl) ? 1 : 0.45,
+            }}
+          >
+            {fillingCovers ? 'Cancel' : 'Fill missing covers'}
+          </button>
+        </div>
+      )}
 
       {pendingImport && (
         <div

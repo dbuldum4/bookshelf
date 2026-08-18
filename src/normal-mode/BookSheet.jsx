@@ -8,6 +8,8 @@ import { Sheet, SheetDescription, SheetHeader, SheetTitle } from '@/components/u
 import { Textarea } from '@/components/ui/textarea'
 import {
   lookupBookByIsbn,
+  lookupBookByTitleAuthor,
+  mergeBlankBookMetadata,
   READING_STATUSES,
   searchAcclaimedBooks,
 } from '../library'
@@ -35,6 +37,7 @@ function BookSheet({
     isbn: '',
     pageCount: '',
     coverUrl: '',
+    publishedYear: '',
     shelfId: shelves[0]?.id || '',
     status: 'Want to Read',
     rating: 0,
@@ -54,6 +57,8 @@ function BookSheet({
   const [suggestionError, setSuggestionError] = useState('')
   const [coverFailed, setCoverFailed] = useState(false)
   const isbnRequestId = useRef(0)
+  const detailsRequestId = useRef(0)
+  const detailsAbort = useRef(null)
   const blurTimer = useRef(null)
   const titleInputRef = useRef(null)
 
@@ -66,6 +71,7 @@ function BookSheet({
         isbn: book.isbn || '',
         pageCount: book.pageCount || '',
         coverUrl: book.coverUrl || '',
+        publishedYear: book.publishedYear || '',
         shelfId: book.shelfId || shelves[0]?.id || '',
         status: book.status || 'Want to Read',
         rating: book.rating || 0,
@@ -83,6 +89,7 @@ function BookSheet({
         isbn: '',
         pageCount: '',
         coverUrl: '',
+        publishedYear: '',
         shelfId: shelves[0]?.id || '',
         status: 'Want to Read',
         rating: 0,
@@ -99,6 +106,8 @@ function BookSheet({
     setShowSuggestions(false)
     setSuggestionError('')
     setCoverFailed(false)
+    detailsAbort.current?.abort()
+    detailsAbort.current = null
   }, [book, open, shelves])
 
   useEffect(() => {
@@ -107,11 +116,15 @@ function BookSheet({
     }
   }, [isAdding, open])
 
+  useEffect(() => () => {
+    detailsAbort.current?.abort()
+  }, [])
+
   const handleChange = (field, value) => {
     setDraft((current) => ({ ...current, [field]: value }))
     if (!isAdding && book) {
       if (field === 'tags') return
-      if (field === 'currentPage' || field === 'pageCount') {
+      if (field === 'currentPage' || field === 'pageCount' || field === 'publishedYear') {
         onUpdateBook({ [field]: value })
       } else if (field === 'rating') {
         onUpdateBook({ rating: Number(value) })
@@ -231,11 +244,34 @@ function BookSheet({
       if (!isAdding && book) {
         onUpdateBook({ ...result })
       }
+      setCoverFailed(false)
     } catch (error) {
       if (requestId !== isbnRequestId.current) return
       setLookupError(error instanceof Error ? error.message : 'Could not look up that ISBN.')
     } finally {
       if (requestId === isbnRequestId.current) setLookingUp(false)
+    }
+  }
+
+  const findCoverAndDetails = async () => {
+    const requestId = ++detailsRequestId.current
+    detailsAbort.current?.abort()
+    const controller = new AbortController()
+    detailsAbort.current = controller
+    setLookingUp(true)
+    setLookupError('')
+    try {
+      const result = await lookupBookByTitleAuthor(draft.title, draft.author, controller.signal)
+      if (requestId !== detailsRequestId.current || controller.signal.aborted) return
+      const updates = mergeBlankBookMetadata(draft, result)
+      setDraft((current) => ({ ...current, ...updates }))
+      if (!isAdding && book) onUpdateBook(updates)
+      setCoverFailed(false)
+    } catch (error) {
+      if (error?.name === 'AbortError' || controller.signal.aborted || requestId !== detailsRequestId.current) return
+      setLookupError(error instanceof Error ? error.message : 'Could not look up that book.')
+    } finally {
+      if (requestId === detailsRequestId.current) setLookingUp(false)
     }
   }
 
@@ -482,8 +518,32 @@ function BookSheet({
               {lookingUp ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
             </Button>
           </div>
-          {lookupError && <p className="text-sm text-destructive">{lookupError}</p>}
         </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="book-published">Published year</Label>
+          <Input
+            id="book-published"
+            type="number"
+            min={1}
+            max={3000}
+            value={draft.publishedYear}
+            onChange={(e) => handleChange('publishedYear', e.target.value)}
+            placeholder="—"
+          />
+        </div>
+
+        {!isAdding && (
+          <div className="space-y-2">
+            <Button type="button" variant="outline" onClick={findCoverAndDetails} disabled={lookingUp}>
+              {lookingUp ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}
+              Find cover and details
+            </Button>
+            {lookupError && <p className="text-sm text-destructive">{lookupError}</p>}
+          </div>
+        )}
+
+        {isAdding && lookupError && <p className="text-sm text-destructive">{lookupError}</p>}
 
         <div className="space-y-2">
           <Label htmlFor="book-notes">Notes</Label>

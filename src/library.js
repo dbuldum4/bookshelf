@@ -120,6 +120,38 @@ export function sanitizeCoverUrl(url) {
   }
 }
 
+function asPublishedYear(value) {
+  const year = asNumber(value)
+  if (year < 1 || year > 3000) return 0
+  return year
+}
+
+export function isBlankMetadataValue(value) {
+  if (value == null) return true
+  if (typeof value === 'number') return !Number.isFinite(value) || value <= 0
+  if (typeof value === 'string') return !value.trim()
+  return false
+}
+
+/** Fill only blank isbn / pageCount / coverUrl / publishedYear from a lookup. */
+export function mergeBlankBookMetadata(current, incoming) {
+  const book = current && typeof current === 'object' ? current : {}
+  const found = incoming && typeof incoming === 'object' ? incoming : {}
+  const isbn = isBlankMetadataValue(book.isbn)
+    ? (typeof found.isbn === 'string' ? found.isbn.trim() : '')
+    : book.isbn
+  const pageCount = isBlankMetadataValue(book.pageCount)
+    ? asNumber(found.pageCount)
+    : asNumber(book.pageCount)
+  const coverUrl = isBlankMetadataValue(book.coverUrl)
+    ? sanitizeCoverUrl(found.coverUrl)
+    : (typeof book.coverUrl === 'string' ? book.coverUrl : '')
+  const publishedYear = isBlankMetadataValue(book.publishedYear)
+    ? asPublishedYear(found.publishedYear)
+    : asPublishedYear(book.publishedYear)
+  return { isbn, pageCount, coverUrl, publishedYear }
+}
+
 function asStringField(value, maxLen = MAX_SHORT_FIELD) {
   if (typeof value === 'number' && Number.isFinite(value)) value = String(value)
   if (typeof value !== 'string') return ''
@@ -266,6 +298,7 @@ function normalizeBook(value, index, defaultShelfId = DEFAULT_SHELF_ID) {
     finishedAt: asIsoDateString(book.finishedAt),
     isbn: isbn.slice(0, MAX_SHORT_FIELD),
     coverUrl: sanitizeCoverUrl(book.coverUrl),
+    publishedYear: asPublishedYear(book.publishedYear),
     createdAt,
     shelfId,
   }
@@ -554,6 +587,7 @@ const BOOK_EXPORT_FIELDS = [
   'finishedAt',
   'isbn',
   'coverUrl',
+  'publishedYear',
   'createdAt',
   'shelfId',
 ]
@@ -850,6 +884,7 @@ export function mergeBookRecords(current, incoming, index = 0) {
     notes: mergeNotes(left.notes, right.notes),
     isbn: preferNonEmpty(left.isbn, right.isbn),
     coverUrl: preferNonEmpty(left.coverUrl, right.coverUrl),
+    publishedYear: left.publishedYear || right.publishedYear,
     color: left.color || right.color,
     status,
     rating: Math.max(left.rating, right.rating),
@@ -1415,6 +1450,89 @@ export async function lookupBookByIsbn(value) {
       ? `https://covers.openlibrary.org/b/id/${coverId}-M.jpg`
       : `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg`,
   }
+}
+
+function firstValidIsbn(values) {
+  const list = Array.isArray(values) ? values : [values]
+  for (const value of list) {
+    const isbn = cleanIsbn(value)
+    if (isbn && isValidIsbn(isbn)) return isbn
+  }
+  return ''
+}
+
+/** Look up ISBN, pages, cover, and year from Open Library search. */
+export async function lookupBookByTitleAuthor(title, author, signal) {
+  const qTitle = String(title || '').trim()
+  const qAuthor = String(author || '').trim()
+  if (!qTitle) {
+    throw new Error('Add a title before looking up this book.')
+  }
+
+  const params = new URLSearchParams({
+    title: qTitle,
+    fields: 'key,title,author_name,isbn,cover_i,first_publish_year,number_of_pages_median',
+    limit: '5',
+  })
+  if (qAuthor) params.set('author', qAuthor)
+
+  let response
+  try {
+    response = await fetch(`https://openlibrary.org/search.json?${params}`, { signal })
+  } catch (error) {
+    if (error?.name === 'AbortError') throw error
+    throw new Error('The book lookup is unavailable. Please try again.')
+  }
+  if (!response.ok) throw new Error('The book lookup is unavailable. Please try again.')
+
+  let data
+  try {
+    data = await response.json()
+  } catch (error) {
+    if (error?.name === 'AbortError') throw error
+    throw new Error('The book lookup is unavailable. Please try again.')
+  }
+
+  const docs = Array.isArray(data.docs) ? data.docs : []
+  const book = docs[0]
+  if (!book) throw new Error('No book was found for that title and author.')
+
+  const isbn = firstValidIsbn(book.isbn)
+  const coverI = Number(book.cover_i)
+  const coverUrl = Number.isInteger(coverI) && coverI > 0
+    ? `https://covers.openlibrary.org/b/id/${coverI}-M.jpg`
+    : isbn
+      ? `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg`
+      : ''
+
+  return {
+    isbn,
+    pageCount: asNumber(book.number_of_pages_median),
+    coverUrl: sanitizeCoverUrl(coverUrl),
+    publishedYear: asPublishedYear(book.first_publish_year),
+  }
+}
+
+/** Resolves after `ms`, or rejects with AbortError if `signal` aborts. */
+export function wait(ms, signal) {
+  const delay = Math.max(0, Number(ms) || 0)
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      const error = new Error('Aborted')
+      error.name = 'AbortError'
+      reject(error)
+      return
+    }
+    const timer = setTimeout(resolve, delay)
+    if (!signal) return
+    const onAbort = () => {
+      clearTimeout(timer)
+      const error = new Error('Aborted')
+      error.name = 'AbortError'
+      reject(error)
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
 }
 
 export async function searchAcclaimedBooks(value, signal) {
