@@ -1186,6 +1186,37 @@ function matchGoodreadsShelf(value) {
   return null
 }
 
+function slugifyBookshelfToken(value) {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+}
+
+/** Stable case id for a Goodreads bookshelf token (`gr-<slug>`). */
+function goodreadsCaseId(token) {
+  const slug = slugifyBookshelfToken(token)
+  return slug ? `gr-${slug}`.slice(0, MAX_ID_LENGTH) : ''
+}
+
+function goodreadsCaseName(token) {
+  const slug = slugifyBookshelfToken(token)
+  if (!slug) return ''
+  return slug
+    .split('-')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
+}
+
+function splitBookshelfTokens(value) {
+  return String(value || '')
+    .split(/[,;]/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+}
+
 /**
  * Resolve reading status from CSV columns.
  * Prefer Exclusive Shelf / Shelf / Status. Fall back to Bookshelves only by
@@ -1259,6 +1290,23 @@ export function parseLibraryCsv(text) {
 
   const books = []
   const seenIds = new Set()
+  const namedCases = []
+  const namedCaseIds = new Set()
+
+  const ensureNamedCase = (token) => {
+    const id = goodreadsCaseId(token)
+    const name = goodreadsCaseName(token)
+    if (!id || !name) return ''
+    if (!namedCaseIds.has(id)) {
+      namedCaseIds.add(id)
+      namedCases.push(createShelf({
+        id,
+        name,
+        x: (namedCases.length + 1) * 9,
+      }, namedCases.length + 1))
+    }
+    return id
+  }
 
   for (let index = 1; index < rows.length; index += 1) {
     const cells = parseCsvLine(rows[index])
@@ -1281,14 +1329,17 @@ export function parseLibraryCsv(text) {
     const startedAt = parseLooseDate(cell(row, ['date started', 'started at', 'started']))
     const createdAt = parseLooseDate(cell(row, ['date added', 'created at', 'added']))
     const notes = cell(row, ['my review', 'private notes', 'notes', 'review'])
-    const shelves = cell(row, ['bookshelves', 'tags'])
-    const tags = shelves
-      ? shelves
-        .split(/[,;]/)
-        .map((tag) => tag.trim())
-        .filter(Boolean)
-        .filter((tag) => !matchGoodreadsShelf(tag))
-      : []
+    const tags = splitBookshelfTokens(cell(row, ['bookshelves', 'tags']))
+      .filter((tag) => !matchGoodreadsShelf(tag))
+
+    // Only the first usable token becomes a case — extras stay tags so empty
+    // secondary cases do not eat 9-unit x slots and walk off the room.
+    let shelfId = DEFAULT_SHELF_ID
+    for (const token of tags) {
+      if (shelfId !== DEFAULT_SHELF_ID) break
+      const caseId = ensureNamedCase(token)
+      if (caseId) shelfId = caseId
+    }
 
     const draft = {
       title,
@@ -1305,7 +1356,7 @@ export function parseLibraryCsv(text) {
       currentPage: status === 'Finished' && pageCount ? pageCount : 0,
     }
 
-    const book = pickBookFields(normalizeBook({ ...draft, shelfId: DEFAULT_SHELF_ID }, index - 1))
+    const book = pickBookFields(normalizeBook({ ...draft, shelfId }, index - 1))
     if (seenIds.has(book.id)) book.id = makeId(book.title, index)
     seenIds.add(book.id)
     books.push(book)
@@ -1318,11 +1369,16 @@ export function parseLibraryCsv(text) {
     throw new Error(`Library imports are limited to ${MAX_BOOKS_IMPORT} books.`)
   }
 
-  const shelves = [createDefaultShelf()]
-  return {
+  const fitted = ensureLibraryCapacity({
     books,
-    shelves,
-    count: books.length,
+    shelves: [createDefaultShelf(), ...namedCases],
+  })
+  // 9-unit case slots walk past ±38 walk bounds once a few named cases exist.
+  const clamped = clampShelvesToRoom(fitted.shelves)
+  return {
+    books: fitted.books,
+    shelves: clamped.shelves,
+    count: fitted.books.length,
     format: 'csv',
     version: null,
   }
