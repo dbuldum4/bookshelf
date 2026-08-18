@@ -24,6 +24,13 @@ function NormalMode({
   selectedShelfId,
   onSelectBook,
   onSelectShelf,
+  bulkBookIds,
+  onToggleBulkBook,
+  onSetBulkBooks,
+  onClearBulkBooks,
+  onBulkStatus,
+  onBulkTag,
+  onBulkMove,
   onAddBook,
   onUpdateSelectedBook,
   onDeleteSelectedBook,
@@ -130,6 +137,13 @@ function NormalMode({
                 selectedBookId={selectedBookId}
                 onSelectBook={handleSelectBook}
                 onAddBook={handleAddBook}
+                bulkBookIds={bulkBookIds}
+                onToggleBulkBook={onToggleBulkBook}
+                onSetBulkBooks={onSetBulkBooks}
+                onClearBulkBooks={onClearBulkBooks}
+                onBulkStatus={onBulkStatus}
+                onBulkTag={onBulkTag}
+                onBulkMove={onBulkMove}
               />
             </TabsContent>
 

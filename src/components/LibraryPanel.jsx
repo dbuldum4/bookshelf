@@ -127,6 +127,7 @@ function GoalProgressBar({ label, progress, unitLabel }) {
 }
 
 const MAX_IMPORT_BYTES = 5_000_000
+const EMPTY_BULK_IDS = new Set()
 
 function CoverThumb({ coverUrl, color }) {
   const [failed, setFailed] = useState(false)
@@ -162,6 +163,13 @@ function LibraryPanel({
   selectedShelfId,
   onSelectBook,
   onSelectShelf,
+  bulkBookIds,
+  onToggleBulkBook,
+  onSetBulkBooks,
+  onClearBulkBooks,
+  onBulkStatus,
+  onBulkTag,
+  onBulkMove,
   onAddBook,
   onReplaceLibrary,
   onMergeLibrary,
@@ -195,6 +203,8 @@ function LibraryPanel({
   const [goalDraft, setGoalDraft] = useState(() => loadReadingGoals())
   const [goalError, setGoalError] = useState('')
   const [reviewOpen, setReviewOpen] = useState(false)
+  const [bulkTag, setBulkTag] = useState('')
+  const selectAllRef = useRef(null)
   const blurTimer = useRef(null)
   const importInputRef = useRef(null)
   const transferTimer = useRef(null)
@@ -322,6 +332,10 @@ function LibraryPanel({
     if (next instanceof HTMLElement && next !== active) next.focus()
   }, [selectedBookId])
 
+  const checkedIds = bulkBookIds instanceof Set ? bulkBookIds : EMPTY_BULK_IDS
+  const checkedCount = checkedIds.size
+  const checkedList = [...checkedIds]
+
   const visibleBooks = useMemo(() => {
     const search = query.trim().toLowerCase()
     const filtered = library.filter((book) => {
@@ -343,6 +357,46 @@ function LibraryPanel({
     })
     return sortLibrary(filtered, sortBy)
   }, [library, query, status, shelfFilter, authorFilter, tagFilter, ratingFilter, sortBy, shelfNameById])
+
+  const visibleCheckedCount = visibleBooks.filter((book) => checkedIds.has(book.id)).length
+  const allVisibleChecked = visibleBooks.length > 0 && visibleCheckedCount === visibleBooks.length
+
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = visibleCheckedCount > 0 && !allVisibleChecked
+    }
+  }, [visibleCheckedCount, allVisibleChecked])
+
+  useEffect(() => {
+    if (checkedCount === 0) setBulkTag('')
+  }, [checkedCount])
+
+  const toggleVisibleBulk = () => {
+    if (!onSetBulkBooks) return
+    const visibleIds = visibleBooks.map((book) => book.id)
+    if (allVisibleChecked) {
+      const hidden = checkedList.filter((id) => !visibleIds.includes(id))
+      onSetBulkBooks(hidden)
+      return
+    }
+    onSetBulkBooks([...new Set([...checkedList, ...visibleIds])])
+  }
+
+  const applyBulkStatus = (value) => {
+    if (!value || !onBulkStatus) return
+    onBulkStatus(checkedList, value)
+  }
+
+  const applyBulkMove = (shelfId) => {
+    if (!shelfId || !onBulkMove) return
+    onBulkMove(checkedList, shelfId)
+  }
+
+  const submitBulkTag = (event) => {
+    event.preventDefault()
+    if (!onBulkTag) return
+    if (onBulkTag(checkedList, bulkTag)) setBulkTag('')
+  }
 
   useEffect(() => {
     const search = draft.title.trim()
@@ -1011,6 +1065,18 @@ function LibraryPanel({
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, padding: '0 16px 10px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+          {typeof onToggleBulkBook === 'function' && (
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'rgba(255,255,255,0.55)', fontSize: 11, cursor: visibleBooks.length ? 'pointer' : 'default' }}>
+              <input
+                ref={selectAllRef}
+                type="checkbox"
+                checked={allVisibleChecked}
+                disabled={!visibleBooks.length}
+                onChange={toggleVisibleBulk}
+                aria-label="Select all visible books"
+              />
+            </label>
+          )}
           <span style={{ color: 'rgba(255,255,255,0.46)', fontSize: 12 }}>{visibleBooks.length} shown</span>
           {(activeFilterCount > 0 || query.trim()) && (
             <button
@@ -1117,6 +1183,65 @@ function LibraryPanel({
         >
           {transferError || transferMessage}
         </p>
+      )}
+
+      {checkedCount > 0 && (
+        <div
+          role="region"
+          aria-label="Bulk actions"
+          style={{
+            margin: '0 16px 10px',
+            padding: '8px 10px',
+            borderRadius: 10,
+            background: 'rgba(126, 91, 226, 0.16)',
+            border: '1px solid rgba(169, 131, 255, 0.35)',
+            display: 'grid',
+            gap: 8,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+            <span style={{ fontSize: 12, fontWeight: 600 }}>
+              {checkedCount} selected
+            </span>
+            <button type="button" onClick={onClearBulkBooks} style={{ ...actionButton(), padding: '4px 8px', fontSize: 11 }}>
+              Clear
+            </button>
+          </div>
+          <select
+            aria-label="Set status for selected books"
+            value=""
+            onChange={(event) => applyBulkStatus(event.target.value)}
+            style={{ ...inputStyle, padding: '0 6px' }}
+          >
+            <option value="">Set status</option>
+            {READING_STATUSES.map((value) => (
+              <option key={value} value={value}>{value}</option>
+            ))}
+          </select>
+          <form onSubmit={submitBulkTag} style={{ display: 'flex', gap: 6 }}>
+            <input
+              value={bulkTag}
+              onChange={(event) => setBulkTag(event.target.value)}
+              placeholder="Add tag"
+              aria-label="Tag to add to selected books"
+              style={inputStyle}
+            />
+            <button type="submit" style={{ ...actionButton(true), whiteSpace: 'nowrap' }}>
+              Add tag
+            </button>
+          </form>
+          <select
+            aria-label="Move selected books to shelf"
+            value=""
+            onChange={(event) => applyBulkMove(event.target.value)}
+            style={{ ...inputStyle, padding: '0 6px' }}
+          >
+            <option value="">Move to shelf</option>
+            {shelves.map((shelf) => (
+              <option key={shelf.id} value={shelf.id}>{shelf.name}</option>
+            ))}
+          </select>
+        </div>
       )}
 
       {adding && (
@@ -1253,6 +1378,7 @@ function LibraryPanel({
       >
         {visibleBooks.map((book) => {
           const selected = book.id === selectedBookId
+          const checked = checkedIds.has(book.id)
           const shelfName = shelfNameById[book.shelfId] || 'Shelf'
           const label = [
             book.title,
@@ -1271,6 +1397,24 @@ function LibraryPanel({
                 marginBottom: 2,
               }}
             >
+              {typeof onToggleBulkBook === 'function' && (
+                <label
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    padding: '0 2px 0 4px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => onToggleBulkBook(book.id)}
+                    onClick={(event) => event.stopPropagation()}
+                    aria-label={`Select ${book.title}`}
+                  />
+                </label>
+              )}
               <button
                 type="button"
                 id={`library-book-${book.id}`}

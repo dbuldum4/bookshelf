@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   addEmptyShelf,
+  applyBulkMove,
+  applyBulkStatus,
+  applyBulkTag,
   applyRoomPreset,
   applyShelfTransform,
   booksFitOnShelf,
@@ -897,5 +900,105 @@ describe('room presets', () => {
     expect(clamped.adjusted).toBe(true)
     expect(Math.abs(clamped.shelves[0].x)).toBeLessThan(ROOM_LAYOUT_BOUND)
     expect(Math.abs(clamped.shelves[0].z)).toBeLessThan(ROOM_LAYOUT_BOUND)
+  })
+})
+
+describe('bulk library actions', () => {
+  const library = [
+    { id: 'a', title: 'A', author: 'Ann', status: 'Want to Read', tags: ['classic'], shelfId: DEFAULT_SHELF_ID, startedAt: '', finishedAt: '' },
+    { id: 'b', title: 'B', author: 'Bob', status: 'Reading', tags: [], shelfId: DEFAULT_SHELF_ID, startedAt: '2026-01-01', finishedAt: '' },
+    { id: 'c', title: 'C', author: 'Cara', status: 'Want to Read', tags: ['classic'], shelfId: 'fiction', startedAt: '', finishedAt: '' },
+  ]
+
+  it('sets status on selected books only', () => {
+    const result = applyBulkStatus(library, ['a', 'c'], 'Finished')
+    expect(result.ok).toBe(true)
+    expect(result.books.find((book) => book.id === 'a')).toEqual(expect.objectContaining({
+      status: 'Finished',
+      finishedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+    }))
+    expect(result.books.find((book) => book.id === 'c').status).toBe('Finished')
+    expect(result.books.find((book) => book.id === 'b')).toEqual(expect.objectContaining({
+      status: 'Reading',
+      startedAt: '2026-01-01',
+    }))
+    expect(library[0].status).toBe('Want to Read')
+  })
+
+  it('adds a tag to selected books', () => {
+    const result = applyBulkTag(library, ['a', 'b'], ' sci-fi ')
+    expect(result.ok).toBe(true)
+    expect(result.books.find((book) => book.id === 'a').tags).toEqual(['classic', 'sci-fi'])
+    expect(result.books.find((book) => book.id === 'b').tags).toEqual(['sci-fi'])
+    expect(result.books.find((book) => book.id === 'c').tags).toEqual(['classic'])
+    expect(library[0].tags).toEqual(['classic'])
+  })
+
+  it('does not duplicate an existing tag', () => {
+    const result = applyBulkTag(library, ['a'], 'classic')
+    expect(result.ok).toBe(true)
+    expect(result.books.find((book) => book.id === 'a').tags).toEqual(['classic'])
+  })
+
+  it('rejects an empty tag without changing books', () => {
+    const result = applyBulkTag(library, ['a'], '   ')
+    expect(result.ok).toBe(false)
+    expect(result.reason).toMatch(/tag/i)
+    expect(library[0].tags).toEqual(['classic'])
+  })
+
+  it('rejects an unknown status without changing books', () => {
+    const result = applyBulkStatus(library, ['a'], 'Paused')
+    expect(result.ok).toBe(false)
+    expect(result.reason).toMatch(/status/i)
+    expect(library[0].status).toBe('Want to Read')
+  })
+
+  it('moves selected books to a shelf when they all fit', () => {
+    const shelves = [
+      createDefaultShelf({ width: 12, rows: 4 }),
+      createShelf({ id: 'fiction', name: 'Fiction', width: 12, rows: 4 }),
+    ]
+    const result = applyBulkMove(library, shelves, ['a', 'b'], 'fiction')
+    expect(result.ok).toBe(true)
+    expect(result.books.filter((book) => book.shelfId === 'fiction').map((book) => book.id))
+      .toEqual(['a', 'b', 'c'])
+    expect(library.find((book) => book.id === 'a').shelfId).toBe(DEFAULT_SHELF_ID)
+  })
+
+  it('refuses the whole batch when a move would overflow a shelf', () => {
+    const tiny = createShelf({ id: 'tiny', name: 'Tiny', width: 3.2, rows: 1 })
+    const shelves = [createDefaultShelf(), tiny]
+    const many = Array.from({ length: 12 }, (_, index) => ({
+      id: `book-${index}`,
+      title: `Book ${index}`,
+      shelfId: DEFAULT_SHELF_ID,
+    }))
+    const snapshot = many.map((book) => ({ ...book }))
+    const result = applyBulkMove(many, shelves, many.map((book) => book.id), 'tiny')
+
+    expect(result.ok).toBe(false)
+    expect(result.reason).toMatch(/overflow/i)
+    expect(result.books).toBeUndefined()
+    expect(many).toEqual(snapshot)
+    expect(many.every((book) => book.shelfId === DEFAULT_SHELF_ID)).toBe(true)
+  })
+
+  it('leaves the library unchanged when a bulk move is refused', () => {
+    const tiny = createShelf({ id: 'tiny', name: 'Tiny', width: 3.2, rows: 1 })
+    const occupant = { id: 'here', title: 'Here', shelfId: 'tiny' }
+    const incoming = [
+      { id: 'one', title: 'One', shelfId: DEFAULT_SHELF_ID },
+      { id: 'two', title: 'Two', shelfId: DEFAULT_SHELF_ID },
+      { id: 'three', title: 'Three', shelfId: DEFAULT_SHELF_ID },
+      { id: 'four', title: 'Four', shelfId: DEFAULT_SHELF_ID },
+    ]
+    const books = [occupant, ...incoming]
+    const result = applyBulkMove(books, [createDefaultShelf(), tiny], incoming.map((book) => book.id), 'tiny')
+
+    expect(result.ok).toBe(false)
+    expect(result.reason).toMatch(/overflow/i)
+    expect(books.find((book) => book.id === 'here').shelfId).toBe('tiny')
+    expect(incoming.every((book) => book.shelfId === DEFAULT_SHELF_ID)).toBe(true)
   })
 })

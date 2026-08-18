@@ -49,12 +49,21 @@ const statusColors = {
   Finished: 'outline',
 }
 
+const EMPTY_BULK_IDS = new Set()
+
 function BookList({
   library,
   shelves,
   selectedBookId,
   onSelectBook,
   onAddBook,
+  bulkBookIds,
+  onToggleBulkBook,
+  onSetBulkBooks,
+  onClearBulkBooks,
+  onBulkStatus,
+  onBulkTag,
+  onBulkMove,
 }) {
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState('All')
@@ -63,7 +72,9 @@ function BookList({
   const [tagFilter, setTagFilter] = useState('All')
   const [ratingFilter, setRatingFilter] = useState('All')
   const [sortBy, setSortBy] = useState('shelf')
+  const [bulkTag, setBulkTag] = useState('')
   const searchRef = useRef(null)
+  const selectAllRef = useRef(null)
 
   const shelfNameById = useMemo(
     () => Object.fromEntries(shelves.map((shelf) => [shelf.id, shelf.name])),
@@ -107,6 +118,48 @@ function BookList({
     })
     return sortLibrary(filtered, sortBy)
   }, [library, query, status, shelfFilter, authorFilter, tagFilter, ratingFilter, sortBy, shelfNameById])
+
+  const checkedIds = bulkBookIds instanceof Set ? bulkBookIds : EMPTY_BULK_IDS
+  const checkedCount = checkedIds.size
+  const checkedList = [...checkedIds]
+  const visibleCheckedCount = visibleBooks.filter((book) => checkedIds.has(book.id)).length
+  const allVisibleChecked = visibleBooks.length > 0 && visibleCheckedCount === visibleBooks.length
+
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = visibleCheckedCount > 0 && !allVisibleChecked
+    }
+  }, [visibleCheckedCount, allVisibleChecked])
+
+  useEffect(() => {
+    if (checkedCount === 0) setBulkTag('')
+  }, [checkedCount])
+
+  const toggleVisibleBulk = () => {
+    if (!onSetBulkBooks) return
+    const visibleIds = visibleBooks.map((book) => book.id)
+    if (allVisibleChecked) {
+      onSetBulkBooks(checkedList.filter((id) => !visibleIds.includes(id)))
+      return
+    }
+    onSetBulkBooks([...new Set([...checkedList, ...visibleIds])])
+  }
+
+  const applyStatus = (value) => {
+    if (!value || !onBulkStatus) return
+    onBulkStatus(checkedList, value)
+  }
+
+  const applyMove = (shelfId) => {
+    if (!shelfId || !onBulkMove) return
+    onBulkMove(checkedList, shelfId)
+  }
+
+  const submitBulkTag = (event) => {
+    event.preventDefault()
+    if (!onBulkTag) return
+    if (onBulkTag(checkedList, bulkTag)) setBulkTag('')
+  }
 
   const activeFilterCount = [status, shelfFilter, authorFilter, tagFilter, ratingFilter].filter(
     (v) => v !== 'All'
@@ -217,10 +270,76 @@ function BookList({
         )}
       </div>
 
-      <div className="text-sm text-muted-foreground">
-        {visibleBooks.length} of {library.length} books
-        {activeFilterCount > 0 && ` · ${activeFilterCount} filter${activeFilterCount === 1 ? '' : 's'}`}
+      <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+        {typeof onToggleBulkBook === 'function' && (
+          <label className="inline-flex items-center gap-2">
+            <input
+              ref={selectAllRef}
+              type="checkbox"
+              checked={allVisibleChecked}
+              disabled={!visibleBooks.length}
+              onChange={toggleVisibleBulk}
+              aria-label="Select all visible books"
+              className="h-4 w-4 accent-primary"
+            />
+            <span>Select visible</span>
+          </label>
+        )}
+        <span>
+          {visibleBooks.length} of {library.length} books
+          {activeFilterCount > 0 && ` · ${activeFilterCount} filter${activeFilterCount === 1 ? '' : 's'}`}
+        </span>
       </div>
+
+      {checkedCount > 0 && (
+        <div
+          role="region"
+          aria-label="Bulk actions"
+          className="flex flex-wrap items-center gap-2 rounded-lg border bg-card p-3"
+        >
+          <span className="text-sm font-medium">{checkedCount} selected</span>
+          <Select
+            aria-label="Set status for selected books"
+            value=""
+            onChange={(event) => applyStatus(event.target.value)}
+            className="w-auto min-w-[8rem]"
+          >
+            <option value="">Set status</option>
+            {READING_STATUSES.map((value) => (
+              <option key={value} value={value}>
+                {value}
+              </option>
+            ))}
+          </Select>
+          <form onSubmit={submitBulkTag} className="flex min-w-[12rem] flex-1 items-center gap-2">
+            <Input
+              value={bulkTag}
+              onChange={(event) => setBulkTag(event.target.value)}
+              placeholder="Add tag"
+              aria-label="Tag to add to selected books"
+            />
+            <Button type="submit" variant="secondary" size="sm">
+              Add tag
+            </Button>
+          </form>
+          <Select
+            aria-label="Move selected books to shelf"
+            value=""
+            onChange={(event) => applyMove(event.target.value)}
+            className="w-auto min-w-[8rem]"
+          >
+            <option value="">Move to shelf</option>
+            {shelves.map((shelf) => (
+              <option key={shelf.id} value={shelf.id}>
+                {shelf.name}
+              </option>
+            ))}
+          </Select>
+          <Button type="button" variant="ghost" size="sm" onClick={onClearBulkBooks}>
+            Clear
+          </Button>
+        </div>
+      )}
 
       {visibleBooks.length === 0 ? (
         <div className="flex flex-1 flex-col items-center justify-center rounded-lg border border-dashed p-12 text-center">
@@ -231,48 +350,64 @@ function BookList({
       ) : (
         <div className="grid flex-1 gap-4 overflow-y-auto pb-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {visibleBooks.map((book) => (
-            <button
+            <div
               key={book.id}
-              type="button"
-              onClick={() => onSelectBook(book.id)}
-              className={`text-left transition-colors rounded-lg border bg-card p-4 text-card-foreground shadow-sm hover:bg-accent hover:text-accent-foreground focus:outline-none focus:ring-2 focus:ring-ring ${
+              className={`flex rounded-lg border bg-card text-card-foreground shadow-sm transition-colors ${
                 selectedBookId === book.id ? 'ring-2 ring-ring' : ''
               }`}
             >
-              <div className="flex gap-4">
-                <CoverThumb coverUrl={book.coverUrl} color={book.color} title={book.title} />
-                <div className="min-w-0 flex-1">
-                  <h4 className="truncate font-serif font-medium leading-tight">{book.title}</h4>
-                  <p className="truncate text-sm text-muted-foreground">{book.author}</p>
-                  <div className="mt-2 flex flex-wrap items-center gap-2">
-                    <Badge variant={statusColors[book.status] || 'secondary'}>{book.status}</Badge>
-                    {book.rating > 0 && (
-                      <span className="inline-flex items-center text-xs text-amber-600">
-                        <Star className="mr-0.5 h-3 w-3 fill-current" />
-                        {book.rating}
+              {typeof onToggleBulkBook === 'function' && (
+                <label className="flex cursor-pointer items-start pt-4 pl-3">
+                  <input
+                    type="checkbox"
+                    checked={checkedIds.has(book.id)}
+                    onChange={() => onToggleBulkBook(book.id)}
+                    onClick={(event) => event.stopPropagation()}
+                    aria-label={`Select ${book.title}`}
+                    className="mt-1 h-4 w-4 accent-primary"
+                  />
+                </label>
+              )}
+              <button
+                type="button"
+                onClick={() => onSelectBook(book.id)}
+                className="min-w-0 flex-1 rounded-lg p-4 text-left hover:bg-accent hover:text-accent-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              >
+                <div className="flex gap-4">
+                  <CoverThumb coverUrl={book.coverUrl} color={book.color} title={book.title} />
+                  <div className="min-w-0 flex-1">
+                    <h4 className="truncate font-serif font-medium leading-tight">{book.title}</h4>
+                    <p className="truncate text-sm text-muted-foreground">{book.author}</p>
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <Badge variant={statusColors[book.status] || 'secondary'}>{book.status}</Badge>
+                      {book.rating > 0 && (
+                        <span className="inline-flex items-center text-xs text-amber-600">
+                          <Star className="mr-0.5 h-3 w-3 fill-current" />
+                          {book.rating}
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-2 text-xs text-muted-foreground">{progressLabel(book)}</p>
+                    <p className="truncate text-xs text-muted-foreground">{shelfNameById[book.shelfId]}</p>
+                  </div>
+                </div>
+                {book.tags?.length > 0 && (
+                  <div className="mt-3 flex flex-wrap gap-1">
+                    {book.tags.slice(0, 4).map((tag) => (
+                      <span
+                        key={tag}
+                        className="inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
+                      >
+                        {tag}
                       </span>
+                    ))}
+                    {book.tags.length > 4 && (
+                      <span className="text-[10px] text-muted-foreground">+{book.tags.length - 4}</span>
                     )}
                   </div>
-                  <p className="mt-2 text-xs text-muted-foreground">{progressLabel(book)}</p>
-                  <p className="truncate text-xs text-muted-foreground">{shelfNameById[book.shelfId]}</p>
-                </div>
-              </div>
-              {book.tags?.length > 0 && (
-                <div className="mt-3 flex flex-wrap gap-1">
-                  {book.tags.slice(0, 4).map((tag) => (
-                    <span
-                      key={tag}
-                      className="inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
-                    >
-                      {tag}
-                    </span>
-                  ))}
-                  {book.tags.length > 4 && (
-                    <span className="text-[10px] text-muted-foreground">+{book.tags.length - 4}</span>
-                  )}
-                </div>
-              )}
-            </button>
+                )}
+              </button>
+            </div>
           ))}
         </div>
       )}
