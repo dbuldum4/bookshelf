@@ -33,11 +33,16 @@ import {
   ensureLibraryCapacity,
   loadLibraryState,
   mergeLibraryStates,
-  saveLibraryState,
+  saveLibraryStateAsync,
   shouldRemindLibraryBackup,
   tryReorderBookOnShelf,
   tryReorderBookToIndex,
 } from './library'
+import {
+  loadLibraryStateAsync,
+  markLibraryLoadPending,
+  resolveHydratedLibraryState,
+} from './libraryStorage'
 import Scene from './scene/Scene'
 import { isWebGLAvailable } from './webgl'
 import { loadViewMode, saveViewMode } from './viewMode'
@@ -159,6 +164,7 @@ export default function App() {
       libraryState: state,
       selectedShelfId: state.shelves[0]?.id || DEFAULT_SHELF_ID,
     }
+    markLibraryLoadPending(state.savedAt)
   }
 
   const storedMotionPreference = useRef(loadReducedMotionPreference()).current
@@ -195,8 +201,35 @@ export default function App() {
   )
 
   useEffect(() => {
-    if (!saveLibraryState(libraryState)) {
-      setStatusMessage('Could not save library to this browser. Storage may be full or disabled.')
+    let cancelled = false
+    loadLibraryStateAsync()
+      .then((remote) => {
+        if (cancelled) return
+        setLibraryState((current) => resolveHydratedLibraryState({
+          initial: initialLibraryRef.current.libraryState,
+          current,
+          remote,
+        }))
+      })
+      .catch(() => {
+        // Persist stays on localStorage; IDB writes remain provisional.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    // Skip only the unchanged first-paint snapshot so a stale LS copy cannot clobber IDB.
+    if (libraryState === initialLibraryRef.current.libraryState) return
+    let cancelled = false
+    saveLibraryStateAsync(libraryState).then((ok) => {
+      if (!cancelled && !ok) {
+        setStatusMessage('Could not save library to this browser. Storage may be full or disabled.')
+      }
+    })
+    return () => {
+      cancelled = true
     }
   }, [libraryState])
 

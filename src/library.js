@@ -1,6 +1,13 @@
-const STORAGE_KEY = 'bookshelf-library-v3'
-const LEGACY_STORAGE_KEY_V2 = 'bookshelf-library-v2'
-const LEGACY_STORAGE_KEY_V1 = 'bookshelf-library-v1'
+import {
+  LEGACY_STORAGE_KEY_V1,
+  LEGACY_STORAGE_KEY_V2,
+  LIBRARY_STORAGE_KEY,
+  deserializeLibraryState,
+  indexedDBWriteOptions,
+  librarySavedAt,
+  serializeLibraryState,
+  writeLibraryToIndexedDB,
+} from './libraryStorage.js'
 
 export const READING_STATUSES = ['Want to Read', 'Reading', 'Finished']
 
@@ -432,7 +439,7 @@ function booksFromLegacyArray(rawBooks) {
 
 function finalizeLoadedState(state) {
   const { books, shelves } = ensureLibraryCapacity(state)
-  return { books, shelves }
+  return { books, shelves, savedAt: librarySavedAt(state) }
 }
 
 export function loadLibraryState() {
@@ -441,25 +448,16 @@ export function loadLibraryState() {
 
   let rawV3 = null
   try {
-    rawV3 = window.localStorage.getItem(STORAGE_KEY)
+    rawV3 = window.localStorage.getItem(LIBRARY_STORAGE_KEY)
   } catch {
     return fallback
   }
 
   // v3 key present — never fall through to legacy
   if (rawV3 != null) {
-    let saved = null
-    try {
-      saved = JSON.parse(rawV3)
-    } catch {
-      return finalizeLoadedState(fallback)
-    }
-    if (Array.isArray(saved)) return finalizeLoadedState(booksFromLegacyArray(saved))
-    if (saved && typeof saved === 'object' && Array.isArray(saved.books)) {
-      return finalizeLoadedState(saved)
-    }
-    // corrupt shape
-    return finalizeLoadedState(fallback)
+    const saved = deserializeLibraryState(rawV3)
+    if (!saved) return finalizeLoadedState(fallback)
+    return finalizeLoadedState(saved)
   }
 
   // no v3 — migrate legacy
@@ -490,28 +488,51 @@ export function loadLibrary() {
   return loadLibraryState().books
 }
 
-export function saveLibraryState(state) {
-  if (typeof window === 'undefined') return false
+function writeLocalLibraryRecord(state) {
+  if (typeof window === 'undefined') return { record: null, wroteLocal: false }
+  const normalized = normalizeLibraryState(state)
+  const savedAt = Date.now()
+  const serialized = serializeLibraryState(normalized, savedAt)
+  const record = deserializeLibraryState(serialized)
+  let wroteLocal = false
   try {
-    const normalized = normalizeLibraryState(state)
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized))
+    window.localStorage.setItem(LIBRARY_STORAGE_KEY, serialized)
     try {
       window.localStorage.removeItem(LEGACY_STORAGE_KEY_V2)
       window.localStorage.removeItem(LEGACY_STORAGE_KEY_V1)
     } catch {
       // Legacy cleanup is best-effort; v3 write already succeeded.
     }
-    return true
+    wroteLocal = true
   } catch {
-    return false
+    wroteLocal = false
   }
+  return { record, wroteLocal }
+}
+
+function persistRecordToIndexedDB(record) {
+  if (!record) return Promise.resolve(false)
+  return writeLibraryToIndexedDB(record, indexedDBWriteOptions())
+}
+
+export function saveLibraryState(state) {
+  const { record, wroteLocal } = writeLocalLibraryRecord(state)
+  // IndexedDB can still accept a library that no longer fits in localStorage.
+  void persistRecordToIndexedDB(record)
+  return wroteLocal
+}
+
+export async function saveLibraryStateAsync(state) {
+  const { record, wroteLocal } = writeLocalLibraryRecord(state)
+  const wroteIdb = await persistRecordToIndexedDB(record)
+  return wroteLocal || wroteIdb
 }
 
 function readExistingShelves() {
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY)
+    const raw = window.localStorage.getItem(LIBRARY_STORAGE_KEY)
     if (!raw) return [createDefaultShelf()]
-    const data = JSON.parse(raw)
+    const data = deserializeLibraryState(raw)
     if (data && Array.isArray(data.shelves) && data.shelves.length) {
       return data.shelves.map((shelf, index) => normalizeShelf(shelf, index))
     }
