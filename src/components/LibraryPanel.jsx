@@ -3,6 +3,7 @@ import {
   computeGoalProgress,
   computeLibraryStats,
   computeYearInReview,
+  yearInReviewComparisonText,
   downloadLibraryExport,
   LIBRARY_SORT_OPTIONS,
   loadReadingGoals,
@@ -780,13 +781,7 @@ function LibraryPanel({
             </div>
 
             <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.55)' }}>
-              {yearReview.previousYearFinished === 0 && yearReview.finishedCount === 0
-                ? `No finishes recorded for ${yearReview.year - 1} or ${yearReview.year} yet.`
-                : yearReview.finishedCount === yearReview.previousYearFinished
-                  ? `Tied with ${yearReview.year - 1} (${yearReview.previousYearFinished} finished).`
-                  : yearReview.finishedCount > yearReview.previousYearFinished
-                    ? `${yearReview.finishedCount - yearReview.previousYearFinished} more than ${yearReview.year - 1} (${yearReview.previousYearFinished}).`
-                    : `${yearReview.previousYearFinished - yearReview.finishedCount} behind ${yearReview.year - 1} (${yearReview.previousYearFinished}).`}
+              {yearInReviewComparisonText(yearReview)}
             </div>
 
             <div>

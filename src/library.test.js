@@ -12,6 +12,7 @@ import {
   computeGoalProgress,
   computeLibraryStats,
   computeYearInReview,
+  yearInReviewComparisonText,
   createDefaultShelf,
   createLibrary,
   createLibraryState,
@@ -446,6 +447,17 @@ describe('library sort and stats', () => {
     expect(review.topRated.map((book) => book.title)).toEqual(['Alpha', 'Beta', 'Gamma'])
   })
 
+  it('describes year-over-year finish comparison for year-in-review', () => {
+    expect(yearInReviewComparisonText({ year: 2026, finishedCount: 0, previousYearFinished: 0 }))
+      .toBe('No finishes recorded for 2025 or 2026 yet.')
+    expect(yearInReviewComparisonText({ year: 2026, finishedCount: 4, previousYearFinished: 4 }))
+      .toBe('Tied with 2025 (4 finished).')
+    expect(yearInReviewComparisonText({ year: 2026, finishedCount: 6, previousYearFinished: 4 }))
+      .toBe('2 more than 2025 (4).')
+    expect(yearInReviewComparisonText({ year: 2026, finishedCount: 3, previousYearFinished: 5 }))
+      .toBe('2 behind 2025 (5).')
+  })
+
   it('treats stored calendar dates as calendar dates in negative UTC offsets', () => {
     const originalTimezone = process.env.TZ
     process.env.TZ = 'America/New_York'
@@ -506,6 +518,28 @@ describe('reading goals', () => {
     })
 
     expect(saveReadingGoals(2026, { books: 24, pages: 8000 })).toBe(false)
+  })
+
+  it('pairs loadReadingGoals with computeYearInReview for the same calendar year', () => {
+    expect(saveReadingGoals(2026, { books: 12, pages: 4000 })).toBe(true)
+    const library = [
+      { status: 'Finished', pageCount: 300, rating: 5, finishedAt: '2026-02-10' },
+      { status: 'Finished', pageCount: 200, rating: 4, finishedAt: '2026-06-01' },
+      { status: 'Finished', pageCount: 180, rating: 3, finishedAt: '2025-11-01' },
+    ]
+    const stats = computeLibraryStats(library, new Date('2026-07-15T12:00:00Z'))
+    const goals = loadReadingGoals(stats.year)
+    const review = computeYearInReview(library, stats.year)
+    const booksProgress = computeGoalProgress(stats.finishedThisYear, goals.books)
+    const pagesProgress = computeGoalProgress(stats.pagesFinishedThisYear, goals.pages)
+
+    expect(goals).toEqual({ books: 12, pages: 4000 })
+    expect(review.year).toBe(2026)
+    expect(review.finishedCount).toBe(stats.finishedThisYear)
+    expect(review.pagesFinished).toBe(stats.pagesFinishedThisYear)
+    expect(booksProgress).toMatchObject({ active: true, current: 2, target: 12, remaining: 10, met: false })
+    expect(pagesProgress).toMatchObject({ active: true, current: 500, target: 4000, remaining: 3500, met: false })
+    expect(yearInReviewComparisonText(review)).toBe('1 more than 2025 (1).')
   })
 
   it('computes goal progress including met and inactive states', () => {

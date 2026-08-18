@@ -37,6 +37,7 @@ function NormalMode({
   onExport,
   onToggle3D,
   onStatus,
+  onReorderBook,
   reducedMotion,
   setReducedMotion,
   graphicsQuality,
@@ -148,7 +149,7 @@ function NormalMode({
             </TabsContent>
 
             <TabsContent value="stats" className="h-full overflow-y-auto">
-              <StatsView library={library} />
+              <StatsView library={library} onSelectBook={handleSelectBook} />
             </TabsContent>
 
             <TabsContent value="import" className="h-full overflow-y-auto">
@@ -185,6 +186,7 @@ function NormalMode({
         onAddBook={handleAddBookSubmit}
         onUpdateBook={onUpdateSelectedBook}
         onDeleteBook={onDeleteSelectedBook}
+        onReorder={onReorderBook}
         onStatus={onStatus}
       />
     </div>
