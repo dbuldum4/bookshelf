@@ -2,7 +2,7 @@ const STORAGE_KEY = 'bookshelf-library-v3'
 const LEGACY_STORAGE_KEY_V2 = 'bookshelf-library-v2'
 const LEGACY_STORAGE_KEY_V1 = 'bookshelf-library-v1'
 
-export const READING_STATUSES = ['Want to Read', 'Reading', 'Finished']
+export const READING_STATUSES = ['Want to Read', 'Reading', 'Paused', 'Finished', 'Did Not Finish']
 
 /** Default named case every library starts with (and migrations land on). */
 export const DEFAULT_SHELF_ID = 'library'
@@ -778,10 +778,14 @@ export function shouldRemindLibraryBackup(options = {}) {
 /* Merge import                                                        */
 /* ------------------------------------------------------------------ */
 
+// Paused/DNF must sit at least as high as Reading (and Finished) so a
+// shallower Goodreads rematch cannot regress a local Paused/DNF status.
 const STATUS_RANK = {
   'Want to Read': 0,
-  Reading: 1,
-  Finished: 2,
+  Reading: 2,
+  Finished: 3,
+  Paused: 3,
+  'Did Not Finish': 3,
 }
 
 function normalizeMatchKey(title, author) {
@@ -1183,35 +1187,47 @@ function matchGoodreadsShelf(value) {
   }
   if (shelf === 'read' || shelf === 'finished') return 'Finished'
   if (shelf === 'to-read' || shelf === 'to read' || shelf === 'want to read') return 'Want to Read'
+  if (shelf === 'paused' || shelf === 'on-hold' || shelf === 'on hold') return 'Paused'
+  if (shelf === 'dnf' || shelf === 'abandoned' || shelf === 'did not finish' || shelf === 'did-not-finish') {
+    return 'Did Not Finish'
+  }
+  return null
+}
+
+function isPausedOrDnfStatus(status) {
+  return status === 'Paused' || status === 'Did Not Finish'
+}
+
+function firstMappedShelfToken(value, accept = () => true) {
+  if (!value) return null
+  for (const token of String(value).split(/[,;]/).map((part) => part.trim()).filter(Boolean)) {
+    const mapped = matchGoodreadsShelf(token)
+    if (mapped && accept(mapped)) return mapped
+  }
   return null
 }
 
 /**
  * Resolve reading status from CSV columns.
- * Prefer Exclusive Shelf / Shelf / Status. Fall back to Bookshelves only by
- * scanning comma-separated tokens for a known exclusive-shelf value so multi-tag
- * cells like "currently-reading, fantasy" do not collapse to Want to Read.
+ * Prefer Exclusive Shelf / Shelf / Status. Official exclusive values are
+ * read/currently-reading/to-read; dnf/paused usually live only in Bookshelves,
+ * so those tokens override the official exclusive when present. Otherwise fall
+ * back to scanning Bookshelves for any known status so multi-tag cells like
+ * "currently-reading, fantasy" do not collapse to Want to Read.
  */
 function resolveGoodreadsStatus(row) {
   const exclusive = cell(row, ['exclusive shelf', 'shelf', 'status'])
   if (exclusive) {
-    const mapped = matchGoodreadsShelf(exclusive)
+    const mapped = matchGoodreadsShelf(exclusive) || firstMappedShelfToken(exclusive)
+    if (mapped && isPausedOrDnfStatus(mapped)) return mapped
+    // Official exclusive shelves omit dnf/paused; those tokens live in Bookshelves.
+    const override = firstMappedShelfToken(cell(row, ['bookshelves']), isPausedOrDnfStatus)
+    if (override) return override
     if (mapped) return mapped
-    // Exclusive shelf is sometimes free-form; still try token split.
-    for (const token of exclusive.split(/[,;]/).map((part) => part.trim()).filter(Boolean)) {
-      const tokenMapped = matchGoodreadsShelf(token)
-      if (tokenMapped) return tokenMapped
-    }
     return 'Want to Read'
   }
 
-  const bookshelves = cell(row, ['bookshelves'])
-  if (!bookshelves) return 'Want to Read'
-  for (const token of bookshelves.split(/[,;]/).map((part) => part.trim()).filter(Boolean)) {
-    const mapped = matchGoodreadsShelf(token)
-    if (mapped) return mapped
-  }
-  return 'Want to Read'
+  return firstMappedShelfToken(cell(row, ['bookshelves'])) || 'Want to Read'
 }
 
 function parseLooseDate(value) {
@@ -1539,7 +1555,8 @@ function monthFromDateString(value) {
 
 /**
  * Aggregate reading stats for the library panel dashboard.
- * pagesRead counts finished pageCount plus in-progress currentPage.
+ * pagesRead counts finished pageCount plus Reading/Paused currentPage.
+ * Did Not Finish is excluded from pagesRead.
  */
 export function computeLibraryStats(library, now = new Date()) {
   const books = Array.isArray(library) ? library : []
@@ -1570,7 +1587,7 @@ export function computeLibraryStats(library, now = new Date()) {
         finishedThisYear += 1
         pagesFinishedThisYear += pages
       }
-    } else if (status === 'Reading') {
+    } else if (status === 'Reading' || status === 'Paused') {
       pagesRead += asNumber(book.currentPage)
     }
   }

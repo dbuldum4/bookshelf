@@ -46,7 +46,9 @@ function CoverThumb({ coverUrl, color, title }) {
 const statusColors = {
   'Want to Read': 'secondary',
   Reading: 'default',
+  Paused: 'outline',
   Finished: 'outline',
+  'Did Not Finish': 'destructive',
 }
 
 function BookList({
@@ -161,7 +163,7 @@ function BookList({
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <Select value={status} onChange={(e) => setStatus(e.target.value)} className="w-auto min-w-[8rem]">
+        <Select value={status} onChange={(e) => setStatus(e.target.value)} className="w-auto min-w-[11rem]">
           <option value="All">All statuses</option>
           {READING_STATUSES.map((s) => (
             <option key={s} value={s}>
