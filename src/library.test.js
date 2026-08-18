@@ -5,6 +5,7 @@ import {
   applyShelfTransform,
   booksFitOnShelf,
   booksOnShelf,
+  bookSpineWidth,
   bookWorldFocusPosition,
   buildShelfBooks,
   buildShelfCaseLayout,
@@ -25,6 +26,7 @@ import {
   loadReadingGoals,
   markLibraryBackupDone,
   normalizeReadingGoals,
+  packBooksIntoRows,
   mergeBookRecords,
   mergeLibraryStates,
   mergeNotes,
@@ -47,6 +49,7 @@ import {
   sortLibrary,
   tryReorderBookOnShelf,
   tryReorderBookToIndex,
+  tryUpdateBookOnShelf,
 } from './library'
 
 function makeStorage(initial = {}) {
@@ -248,6 +251,111 @@ describe('shelf layout and capacity', () => {
     const layout = buildShelfCaseLayout(state.books, state.shelves[0])
     expect(layout).toHaveLength(state.shelves[0].rows)
     expect(layout.flat()).toHaveLength(state.books.length)
+  })
+
+  it('keeps hash jitter around 0.54-0.72 when page count is 0', () => {
+    for (let index = 0; index < 24; index += 1) {
+      const width = bookSpineWidth({ id: `zero-${index}`, pageCount: 0 }, index)
+      expect(width).toBeGreaterThanOrEqual(0.54)
+      expect(width).toBeLessThanOrEqual(0.72)
+    }
+    expect(bookSpineWidth({ id: 'missing-pages' })).toBeGreaterThanOrEqual(0.54)
+    expect(bookSpineWidth({ id: 'missing-pages' })).toBeLessThanOrEqual(0.72)
+  })
+
+  it('interpolates spine thickness from page count plus small id jitter', () => {
+    const thin = bookSpineWidth({ id: 'anchor', pageCount: 100 })
+    const fat = bookSpineWidth({ id: 'anchor', pageCount: 800 })
+    expect(thin).toBeGreaterThan(0.36)
+    expect(thin).toBeLessThan(0.48)
+    expect(fat).toBeGreaterThan(0.86)
+    expect(fat).toBeLessThan(0.98)
+    expect(fat).toBeGreaterThan(thin)
+
+    const otherThin = bookSpineWidth({ id: 'other-anchor', pageCount: 100 })
+    expect(otherThin).not.toBe(thin)
+    expect(otherThin).toBeGreaterThan(0.36)
+    expect(otherThin).toBeLessThan(0.48)
+  })
+
+  it('rejects increasing pageCount on a packed shelf instead of dropping the book', () => {
+    const state = createLibraryState()
+    const shelf = state.shelves[0]
+    let books = state.books
+    expect(booksFitOnShelf(books, shelf)).toBe(true)
+    expect(buildShelfCaseLayout(books, shelf).flat()).toHaveLength(books.length)
+
+    let rejected = null
+    for (const book of books) {
+      const result = tryUpdateBookOnShelf(books, [shelf], book.id, { pageCount: 800 })
+      if (!result.ok) {
+        rejected = { book, result }
+        break
+      }
+      books = result.books
+    }
+
+    expect(rejected).not.toBeNull()
+    expect(rejected.result.reason).toMatch(/full/i)
+    expect(rejected.result.books).toBeUndefined()
+
+    const forced = books.map((book) => (
+      book.id === rejected.book.id ? { ...book, pageCount: 800 } : book
+    ))
+    expect(booksFitOnShelf(forced, shelf)).toBe(false)
+    expect(packBooksIntoRows(forced, shelf).length).toBeGreaterThan(shelf.rows)
+    expect(buildShelfCaseLayout(forced, shelf).flat().length).toBeLessThan(forced.length)
+    expect(buildShelfCaseLayout(books, shelf).flat()).toHaveLength(books.length)
+    expect(books.find((book) => book.id === rejected.book.id).pageCount).toBe(0)
+  })
+
+  it('allows a pageCount edit that still fits and keeps non-width edits on a full case', () => {
+    const shelf = createDefaultShelf()
+    const solo = [{ id: 'solo', title: 'Solo', author: 'A', pageCount: 0, shelfId: shelf.id }]
+    const grown = tryUpdateBookOnShelf(solo, [shelf], 'solo', { pageCount: 800 })
+    expect(grown.ok).toBe(true)
+    expect(grown.books[0].pageCount).toBe(800)
+
+    const state = createLibraryState()
+    const full = state.shelves[0]
+    const first = state.books[0]
+    const renamed = tryUpdateBookOnShelf(state.books, [full], first.id, { title: 'Renamed on a full case' })
+    expect(renamed.ok).toBe(true)
+    expect(renamed.books[0].title).toBe('Renamed on a full case')
+
+    // Default catalog already fills 4 rows; a second fat spine wraps a 5th and must not apply.
+    const afterOneFat = tryUpdateBookOnShelf(state.books, [full], first.id, { pageCount: 800 })
+    expect(afterOneFat.ok).toBe(true)
+    const second = afterOneFat.books[1]
+    const tooFat = tryUpdateBookOnShelf(
+      afterOneFat.books,
+      [full],
+      second.id,
+      { title: 'Dune', author: 'Frank Herbert', pageCount: 800, isbn: '9780441172719' },
+    )
+    expect(tooFat.ok).toBe(false)
+    expect(tooFat.reason).toMatch(/full/i)
+    expect(afterOneFat.books.find((book) => book.id === second.id)).toEqual(
+      expect.objectContaining({ title: second.title, pageCount: 0 }),
+    )
+  })
+
+  it('a fat book uses more row space than a thin one', () => {
+    const id = 'same-spine'
+    expect(bookSpineWidth({ id, pageCount: 800 })).toBeGreaterThan(bookSpineWidth({ id, pageCount: 100 }))
+
+    const shelf = createDefaultShelf({ width: 5.2, rows: 3 })
+    const make = (pageCount, prefix) => Array.from({ length: 12 }, (_, index) => ({
+      id: `${prefix}-${index}`,
+      title: `${prefix} ${index}`,
+      pageCount,
+      shelfId: shelf.id,
+    }))
+
+    const thinPacked = packBooksIntoRows(make(100, 'thin'), shelf)
+    const fatPacked = packBooksIntoRows(make(800, 'fat'), shelf)
+    expect(fatPacked.length).toBeGreaterThan(thinPacked.length)
+    expect(fatPacked[0].length).toBeLessThan(thinPacked[0].length)
   })
 
   it('blocks shrinking a shelf below its books', () => {

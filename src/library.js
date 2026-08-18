@@ -1794,7 +1794,15 @@ function bookSalt(book, fallbackIndex = 0) {
 
 /** Deterministic spine width for capacity and layout. */
 export function bookSpineWidth(book, fallbackIndex = 0) {
-  return 0.54 + bookRandom(bookSalt(book, fallbackIndex), 1) * 0.18
+  const salt = bookSalt(book, fallbackIndex)
+  const jitter = bookRandom(salt, 1)
+  const pages = Number(book?.pageCount)
+  // Unknown page count keeps the original hash range so existing shelves do not reflow.
+  if (!Number.isFinite(pages) || pages <= 0) {
+    return 0.54 + jitter * 0.18
+  }
+  const t = clamp((pages - 100) / 700, 0, 1)
+  return 0.42 + t * 0.5 + (jitter - 0.5) * 0.06
 }
 
 /**
@@ -1845,7 +1853,7 @@ export function buildShelfBooks(library, rowSalt = 0, shelf = null) {
     const salt = bookSalt(book, rowSalt * 100 + index)
     return {
       ...book,
-      width: 0.54 + bookRandom(salt, 1) * 0.18,
+      width: bookSpineWidth(book, rowSalt * 100 + index),
       height: 1.02 + bookRandom(salt, 2) * 0.28,
       depth: 0.52 + bookRandom(salt, 3) * 0.16,
       tilt: bookRandom(salt, 4) > 0.84
@@ -1950,6 +1958,38 @@ export function shelfFrameHeight(rows) {
   return count * SHELF_ROW_SPACING + 1.1
 }
 
+function today() {
+  const date = new Date()
+  const offset = date.getTimezoneOffset() * 60_000
+  return new Date(date.getTime() - offset).toISOString().slice(0, 10)
+}
+
+/** Same wording as addBook so live width edits flash a familiar capacity status. */
+export const SHELF_FULL_REASON = 'That shelf is full. Free space, pick another shelf, or resize it in Arrange mode.'
+
+/**
+ * Clamp pages and stamp status dates so inspector edits match persisted books.
+ */
+export function applyBookFieldUpdates(book, updates = {}) {
+  const next = { ...book, ...updates }
+  if (updates.status === 'Reading' && !book.startedAt) next.startedAt = today()
+  if (updates.status === 'Finished' && !book.finishedAt) next.finishedAt = today()
+  if (updates.pageCount !== undefined) {
+    next.pageCount = Math.max(0, Number(updates.pageCount) || 0)
+    const currentPage = Math.max(0, Number(next.currentPage) || 0)
+    next.currentPage = next.pageCount
+      ? Math.min(currentPage, next.pageCount)
+      : Math.min(currentPage, MAX_CURRENT_PAGE_WITHOUT_COUNT)
+  }
+  if (updates.currentPage !== undefined) {
+    const currentPage = Math.max(0, Number(updates.currentPage) || 0)
+    next.currentPage = next.pageCount
+      ? Math.min(currentPage, next.pageCount)
+      : Math.min(currentPage, MAX_CURRENT_PAGE_WITHOUT_COUNT)
+  }
+  return next
+}
+
 /**
  * Try to assign a book to a shelf. Returns { ok, books } or { ok:false, reason }.
  */
@@ -1961,6 +2001,46 @@ export function assignBookToShelf(library, bookId, shelfId, shelf) {
     return { ok: false, reason: 'That shelf is full. Free space or resize it in Arrange mode.' }
   }
   return { ok: true, books: next }
+}
+
+/**
+ * Apply live book edits. Rejects changes that would pack past the case —
+ * overflow rows are omitted from 3D and then saved.
+ */
+export function tryUpdateBookOnShelf(library, shelves, bookId, updates = {}) {
+  const books = Array.isArray(library) ? library : []
+  const list = Array.isArray(shelves) ? shelves : []
+  const current = books.find((book) => book.id === bookId)
+  if (!current) return { ok: false, reason: 'That book is no longer in the library.' }
+
+  let working = books
+  if (updates.shelfId && updates.shelfId !== current.shelfId) {
+    const target = list.find((shelf) => shelf.id === updates.shelfId)
+    if (!target) return { ok: false, reason: 'That shelf is no longer available.' }
+    const assigned = assignBookToShelf(working, bookId, updates.shelfId, target)
+    if (!assigned.ok) return assigned
+    working = assigned.books
+  }
+
+  const fieldUpdates = { ...updates }
+  delete fieldUpdates.shelfId
+  const nextBooks = Object.keys(fieldUpdates).length === 0
+    ? working
+    : working.map((book) => (book.id === bookId ? applyBookFieldUpdates(book, fieldUpdates) : book))
+
+  const updated = nextBooks.find((book) => book.id === bookId)
+  const shelf = list.find((entry) => entry.id === updated.shelfId)
+  if (!shelf) return { ok: false, reason: 'That shelf is no longer available.' }
+
+  const nextMembers = booksOnShelf(nextBooks, shelf.id)
+  if (!booksFitOnShelf(nextMembers, shelf)) {
+    const prevMembers = booksOnShelf(working, shelf.id)
+    const worsened = booksFitOnShelf(prevMembers, shelf)
+      || packBooksIntoRows(nextMembers, shelf).length > packBooksIntoRows(prevMembers, shelf).length
+    if (worsened) return { ok: false, reason: SHELF_FULL_REASON }
+  }
+
+  return { ok: true, books: nextBooks }
 }
 
 /**
