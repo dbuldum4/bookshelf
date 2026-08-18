@@ -278,6 +278,15 @@ describe('spine colors', () => {
     const book = createBook({ title: 'New', author: 'A' }, 3)
     expect(book.color).toBe(COLORS[3 % COLORS.length])
   })
+
+  it('persists the add-form displayed color when the picker is not changed', () => {
+    const libraryIndex = 40
+    expect(COLORS[libraryIndex % COLORS.length]).not.toBe(COLORS[0])
+    const displayed = toColorInputValue('')
+    expect(displayed).toBe(COLORS[0])
+    const book = createBook({ title: 'New', author: 'A', color: displayed }, libraryIndex)
+    expect(book.color).toBe(COLORS[0])
+  })
 })
 
 describe('shelf layout and capacity', () => {

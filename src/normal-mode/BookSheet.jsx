@@ -45,7 +45,9 @@ function BookSheet({
     finishedAt: '',
     tags: '',
     notes: '',
-    color: '',
+    // Native color inputs do not fire onChange unless the user picks, so start
+    // at the displayed default instead of leaving this empty for createBook.
+    color: COLORS[0],
   })
   const [tagsDraft, setTagsDraft] = useState('')
   const [lookupError, setLookupError] = useState('')
@@ -95,7 +97,7 @@ function BookSheet({
         finishedAt: '',
         tags: '',
         notes: '',
-        color: '',
+        color: COLORS[0],
       })
       setTagsDraft('')
     }
