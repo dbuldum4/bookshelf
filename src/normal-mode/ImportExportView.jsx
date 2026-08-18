@@ -36,7 +36,12 @@ function ImportExportView({
       }
       const text = await file.text()
       const parsed = parseLibraryFile(text, file.name)
-      const payload = { books: parsed.books, shelves: parsed.shelves }
+      const payload = {
+        books: parsed.books,
+        shelves: parsed.shelves,
+        goals: parsed.goals,
+        preferences: parsed.preferences,
+      }
 
       if (!library.length) {
         onReplaceLibrary(payload)
@@ -69,8 +74,10 @@ function ImportExportView({
     if (!pendingImport) return
     const { payload, count, fileName } = pendingImport
     const confirmed = window.confirm(
-      `Replace your entire library (${library.length} book${library.length === 1 ? '' : 's'}) ` +
-        `with ${count} imported book${count === 1 ? '' : 's'}?\n\n` +
+      `Replace your entire library (${library.length} book${library.length === 1 ? '' : 's'}), ` +
+        'reading goals, and settings ' +
+        `with ${count} imported book${count === 1 ? '' : 's'} ` +
+        'and any goals and settings in this file?\n\n' +
         'This cannot be undone unless you export a backup first.'
     )
     if (!confirmed) return

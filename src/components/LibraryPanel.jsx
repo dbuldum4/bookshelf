@@ -412,10 +412,19 @@ function LibraryPanel({
     showTransferFeedback('Import cancelled. Your library was not changed.')
   }
 
+  const syncGoalsFromStorage = () => {
+    const next = loadReadingGoals()
+    setGoals(next)
+    setGoalDraft(next)
+    setEditingGoals(false)
+    setGoalError('')
+  }
+
   const confirmMergeImport = () => {
     if (!pendingImport) return
     const { payload, count, fileName } = pendingImport
     const result = onMergeLibrary?.(payload)
+    syncGoalsFromStorage()
     setPendingImport(null)
     if (result && typeof result === 'object') {
       const { added = 0, updated = 0 } = result
@@ -431,13 +440,16 @@ function LibraryPanel({
     if (!pendingImport) return
     const { payload, count, fileName } = pendingImport
     const confirmed = window.confirm(
-      `Replace your entire library (${library.length} book${library.length === 1 ? '' : 's'}) `
-      + `with ${count} imported book${count === 1 ? '' : 's'}?\n\n`
+      `Replace your entire library (${library.length} book${library.length === 1 ? '' : 's'}), `
+      + 'reading goals, and settings '
+      + `with ${count} imported book${count === 1 ? '' : 's'} `
+      + 'and any goals and settings in this file?\n\n'
       + 'This cannot be undone unless you export a backup first.\n\n'
       + 'OK = Replace · Cancel = keep this import choice open.',
     )
     if (!confirmed) return
     onReplaceLibrary(payload)
+    syncGoalsFromStorage()
     setPendingImport(null)
     showTransferFeedback(`Replaced library with ${count} book${count === 1 ? '' : 's'} from ${fileName}.`)
   }
@@ -459,11 +471,17 @@ function LibraryPanel({
       const parsed = parseLibraryFile(text, file.name)
       const { books, count, format } = parsed
       const kind = format === 'csv' ? 'CSV' : 'JSON'
-      const payload = { books, shelves: parsed.shelves }
+      const payload = {
+        books,
+        shelves: parsed.shelves,
+        goals: parsed.goals,
+        preferences: parsed.preferences,
+      }
 
       // Empty library: always load directly.
       if (!library.length) {
         onReplaceLibrary(payload)
+        syncGoalsFromStorage()
         showTransferFeedback(`Imported ${count} book${count === 1 ? '' : 's'} from ${file.name}.`)
         return
       }
@@ -1085,7 +1103,7 @@ function LibraryPanel({
             into your library of {library.length}.
           </p>
           <p style={{ margin: '0 0 10px', color: 'rgba(255,255,255,0.62)', fontSize: 11 }}>
-            Merge matches by id, ISBN, or title + author. Replace discards your current library.
+            Merge matches by id, ISBN, or title + author. Replace discards your current library, goals, and settings.
           </p>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
             <button type="button" onClick={confirmMergeImport} style={actionButton(true)}>
