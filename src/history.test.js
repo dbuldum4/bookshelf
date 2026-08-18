@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { createHistory } from './history'
+import { COALESCE_IDLE_MS, createHistory } from './history'
+import { bookFieldUpdatesAreNoOp } from './library'
 
 function snap(id) {
   return {
@@ -109,6 +110,57 @@ describe('createHistory', () => {
 
     history.coalesce(snap('c'), 'text')
     expect(history.undo(snap('d'))).toEqual(snap('c'))
+  })
+
+  it('still coalesces a single arrange-drag of the same shelf', () => {
+    const history = createHistory()
+    history.coalesce(snap('start'), 'move:s1', { ttl: COALESCE_IDLE_MS, now: 0 })
+    history.coalesce(snap('mid'), 'move:s1', { ttl: COALESCE_IDLE_MS, now: 80 })
+    history.coalesce(snap('end'), 'move:s1', { ttl: COALESCE_IDLE_MS, now: 200 })
+
+    expect(history.undo(snap('now'))).toEqual(snap('start'))
+    expect(history.undo(snap('start'))).toBe(null)
+  })
+
+  it('two sequential moves of the same shelf produce two undo steps after idle', () => {
+    const history = createHistory()
+    history.coalesce(snap('pre-1'), 'move:s1', { ttl: COALESCE_IDLE_MS, now: 0 })
+    history.coalesce(snap('mid-1'), 'move:s1', { ttl: COALESCE_IDLE_MS, now: 50 })
+    history.coalesce(snap('pre-2'), 'move:s1', { ttl: COALESCE_IDLE_MS, now: 50 + COALESCE_IDLE_MS + 1 })
+    history.coalesce(snap('mid-2'), 'move:s1', { ttl: COALESCE_IDLE_MS, now: 50 + COALESCE_IDLE_MS + 40 })
+
+    expect(history.undo(snap('now'))).toEqual(snap('pre-2'))
+    expect(history.undo(snap('pre-2'))).toEqual(snap('pre-1'))
+    expect(history.undo(snap('pre-1'))).toBe(null)
+  })
+
+  it('endCoalesce expires a move:shelfId key so the next drag is a new undo step', () => {
+    const history = createHistory()
+    history.coalesce(snap('pre-1'), 'move:s1')
+    history.coalesce(snap('mid-1'), 'move:s1')
+    history.endCoalesce()
+    history.coalesce(snap('pre-2'), 'move:s1')
+
+    expect(history.undo(snap('now'))).toEqual(snap('pre-2'))
+    expect(history.undo(snap('pre-2'))).toEqual(snap('pre-1'))
+  })
+
+  it('does not grow history for no-op author and tags updates', () => {
+    const history = createHistory()
+    const book = { id: 'a', title: 'Dune', author: 'Frank Herbert', tags: ['sf', 'classic'] }
+    const snapshot = { books: [book], shelves: [{ id: 'library', name: 'Library' }] }
+
+    const recordUpdate = (updates) => {
+      if (bookFieldUpdatesAreNoOp(book, updates)) return
+      history.push(snapshot)
+    }
+
+    recordUpdate({ author: 'Frank Herbert' })
+    recordUpdate({ tags: ['sf', 'classic'] })
+    expect(history.canUndo()).toBe(false)
+
+    recordUpdate({ author: 'Frank H.' })
+    expect(history.canUndo()).toBe(true)
   })
 
   it('clones snapshots so later mutations do not rewrite history', () => {

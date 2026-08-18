@@ -51,6 +51,7 @@ function Scene({
   selectedShelfId,
   onSelectShelf,
   onMoveShelf,
+  onArrangeDragEnd,
   onReorderBookToIndex,
   focusPoint = null,
 }) {
@@ -70,7 +71,8 @@ function Scene({
       const orbitMode = modeRef.current === 'custom' || modeRef.current === 'arrange'
       controlsRef.current.enabled = orbitMode && !dragging && !bookDragging
     }
-  }, [bookDragging])
+    if (!dragging) onArrangeDragEnd?.()
+  }, [bookDragging, onArrangeDragEnd])
 
   const handleBookDragChange = useCallback((dragging) => {
     setBookDragging(dragging)
