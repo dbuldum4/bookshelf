@@ -26,6 +26,7 @@ function BookSheet({
   onAddBook,
   onUpdateBook,
   onDeleteBook,
+  onReorder,
   onStatus,
 }) {
   const isAdding = !book
@@ -43,6 +44,7 @@ function BookSheet({
     finishedAt: '',
     tags: '',
     notes: '',
+    quotes: [],
   })
   const [tagsDraft, setTagsDraft] = useState('')
   const [lookupError, setLookupError] = useState('')
@@ -74,6 +76,7 @@ function BookSheet({
         finishedAt: book.finishedAt || '',
         tags: (book.tags || []).join(', '),
         notes: book.notes || '',
+        quotes: Array.isArray(book.quotes) ? book.quotes : [],
       })
       setTagsDraft((book.tags || []).join(', '))
     } else {
@@ -91,6 +94,7 @@ function BookSheet({
         finishedAt: '',
         tags: '',
         notes: '',
+        quotes: [],
       })
       setTagsDraft('')
     }
@@ -137,19 +141,33 @@ function BookSheet({
     setDraft((current) => ({ ...current, tags: tags.join(', ') }))
   }
 
+  const currentQuotes = isAdding ? (draft.quotes || []) : (book?.quotes || [])
+
   const updateQuote = (index, value) => {
-    if (!book) return
-    onUpdateBook({ quotes: (book.quotes || []).map((q, i) => (i === index ? value : q)) })
+    const next = currentQuotes.map((quote, quoteIndex) => (quoteIndex === index ? value : quote))
+    if (isAdding) {
+      setDraft((current) => ({ ...current, quotes: next }))
+      return
+    }
+    onUpdateBook({ quotes: next })
   }
 
   const addQuote = () => {
-    if (!book) return
-    onUpdateBook({ quotes: [...(book.quotes || []), ''] })
+    const next = [...currentQuotes, '']
+    if (isAdding) {
+      setDraft((current) => ({ ...current, quotes: next }))
+      return
+    }
+    onUpdateBook({ quotes: next })
   }
 
   const removeQuote = (index) => {
-    if (!book) return
-    onUpdateBook({ quotes: (book.quotes || []).filter((_, i) => i !== index) })
+    const next = currentQuotes.filter((_, quoteIndex) => quoteIndex !== index)
+    if (isAdding) {
+      setDraft((current) => ({ ...current, quotes: next }))
+      return
+    }
+    onUpdateBook({ quotes: next })
   }
 
   useEffect(() => {
@@ -255,6 +273,7 @@ function BookSheet({
       currentPage: Number(draft.currentPage) || 0,
       rating: Number(draft.rating) || 0,
       tags,
+      quotes: (draft.quotes || []).map((quote) => String(quote || '').trim()).filter(Boolean),
       shelfId: draft.shelfId || shelves[0]?.id,
     })
     if (added) {
@@ -295,6 +314,13 @@ function BookSheet({
             alt={`Cover of ${draft.title}`}
             onError={() => setCoverFailed(true)}
             className="mx-auto h-40 w-auto rounded-md object-contain shadow"
+            style={book?.color ? { background: book.color } : undefined}
+          />
+        ) : book?.color ? (
+          <div
+            aria-hidden="true"
+            className="mx-auto h-24 w-3 rounded-md shadow"
+            style={{ background: book.color }}
           />
         ) : null}
 
@@ -381,6 +407,20 @@ function BookSheet({
             </Select>
           </div>
         </div>
+
+        {typeof onReorder === 'function' && !isAdding && book && (
+          <div className="space-y-2">
+            <Label>Order on shelf</Label>
+            <div className="grid grid-cols-2 gap-2">
+              <Button type="button" variant="outline" onClick={() => onReorder(book.id, -1)}>
+                ← Move left
+              </Button>
+              <Button type="button" variant="outline" onClick={() => onReorder(book.id, 1)}>
+                Move right →
+              </Button>
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-2">
@@ -496,38 +536,38 @@ function BookSheet({
           />
         </div>
 
-        {!isAdding && book && (
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label>Favorite quotes</Label>
-              <Button type="button" variant="outline" size="sm" onClick={addQuote}>
-                + Add quote
-              </Button>
-            </div>
-            {(book.quotes || []).length === 0 ? (
-              <p className="text-sm text-muted-foreground">Save lines you want to keep close while reading.</p>
-            ) : (
-              <div className="space-y-2">
-                {(book.quotes || []).map((quote, index) => (
-                  <div key={`quote-${index}`} className="space-y-2 rounded-md border p-2">
-                    <Textarea
-                      value={quote}
-                      onChange={(e) => updateQuote(index, e.target.value)}
-                      placeholder="“So we beat on, boats against the current…”"
-                      rows={2}
-                    />
-                    <div className="flex justify-end">
-                      <Button type="button" variant="ghost" size="sm" onClick={() => removeQuote(index)}>
-                        <X className="mr-1 h-4 w-4" />
-                        Remove
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <Label htmlFor={currentQuotes.length ? 'book-quotes' : undefined}>Favorite quotes</Label>
+            <Button type="button" variant="outline" size="sm" onClick={addQuote}>
+              + Add quote
+            </Button>
           </div>
-        )}
+          {currentQuotes.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Save lines you want to keep close while reading.</p>
+          ) : (
+            <div className="space-y-2">
+              {currentQuotes.map((quote, index) => (
+                <div key={`quote-${index}`} className="space-y-2 rounded-md border p-2">
+                  <Textarea
+                    id={index === 0 ? 'book-quotes' : undefined}
+                    aria-label={`Favorite quote ${index + 1}`}
+                    value={quote}
+                    onChange={(e) => updateQuote(index, e.target.value)}
+                    placeholder="“So we beat on, boats against the current…”"
+                    rows={3}
+                  />
+                  <div className="flex justify-end">
+                    <Button type="button" variant="ghost" size="sm" onClick={() => removeQuote(index)}>
+                      <X className="mr-1 h-4 w-4" />
+                      Remove quote
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
         <div className="flex items-center justify-between pt-4">
           <div>

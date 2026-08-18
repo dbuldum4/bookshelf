@@ -1774,6 +1774,23 @@ export function computeYearInReview(library, yearOrNow = new Date()) {
   }
 }
 
+/** One-line year-over-year finish comparison for year-in-review UIs. */
+export function yearInReviewComparisonText(review) {
+  const year = Number(review?.year) || new Date().getFullYear()
+  const finishedCount = Math.max(0, Math.round(Number(review?.finishedCount) || 0))
+  const previousYearFinished = Math.max(0, Math.round(Number(review?.previousYearFinished) || 0))
+  if (previousYearFinished === 0 && finishedCount === 0) {
+    return `No finishes recorded for ${year - 1} or ${year} yet.`
+  }
+  if (finishedCount === previousYearFinished) {
+    return `Tied with ${year - 1} (${previousYearFinished} finished).`
+  }
+  if (finishedCount > previousYearFinished) {
+    return `${finishedCount - previousYearFinished} more than ${year - 1} (${previousYearFinished}).`
+  }
+  return `${previousYearFinished - finishedCount} behind ${year - 1} (${previousYearFinished}).`
+}
+
 /** Usable inner width for packing spines onto a case. */
 export function shelfInnerWidth(shelf) {
   const width = Number(shelf?.width)

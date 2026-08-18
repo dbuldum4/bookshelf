@@ -700,6 +700,7 @@ export default function App() {
           onApplyRoomPreset={handleApplyRoomPreset}
           onExport={handleBackupExport}
           onToggle3D={() => setViewMode('3d')}
+          onReorderBook={handleReorderBook}
           onStatus={flashStatus}
           reducedMotion={reducedMotion}
           setReducedMotion={setReducedMotionPreference}
