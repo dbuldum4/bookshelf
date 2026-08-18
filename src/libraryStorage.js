@@ -80,16 +80,82 @@ export function resetLibraryPersistence() {
 }
 
 /**
- * Prefer a newer IDB snapshot over first-paint LS, even if the user already
- * typed on that stale copy. Keep the in-memory state when IDB is not newer
- * so a same-generation edit is not discarded.
+ * Prefer a newer IDB snapshot over first-paint LS. If the user already typed
+ * on that stale copy, replay those book/shelf edits on top of IDB instead of
+ * dropping the keystrokes or writing the stale LS library over IDB.
  */
 export function resolveHydratedLibraryState({ initial, current, remote }) {
   if (!remote) return current
   const initialAt = librarySavedAt(initial)
   const remoteAt = librarySavedAt(remote)
-  if (remoteAt > initialAt) return remote
-  return current
+  if (remoteAt <= initialAt) return current
+  if (libraryRecordsEqual(initial, current)) return remote
+  return rebaseLibraryEdits(initial, current, remote)
+}
+
+export function libraryRecordsEqual(left, right) {
+  return stableLibraryJson(left) === stableLibraryJson(right)
+}
+
+/** Apply initial→current add/edit/delete onto a newer remote snapshot. */
+export function rebaseLibraryEdits(initial, current, remote) {
+  return {
+    books: rebaseKeyedRows(initial?.books, current?.books, remote?.books),
+    shelves: rebaseKeyedRows(initial?.shelves, current?.shelves, remote?.shelves),
+    savedAt: Date.now(),
+  }
+}
+
+function stableLibraryJson(state) {
+  return JSON.stringify({
+    books: Array.isArray(state?.books) ? state.books : [],
+    shelves: Array.isArray(state?.shelves) ? state.shelves : [],
+  })
+}
+
+function rebaseKeyedRows(initialList, currentList, remoteList) {
+  const initialById = rowsById(initialList)
+  const currentRows = Array.isArray(currentList) ? currentList : []
+  const remoteRows = Array.isArray(remoteList) ? remoteList : []
+  const currentById = rowsById(currentRows)
+  const merged = []
+  const seen = new Set()
+
+  for (const remoteRow of remoteRows) {
+    const id = remoteRow?.id
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    if (initialById.has(id) && !currentById.has(id)) continue
+    const currentRow = currentById.get(id)
+    const initialRow = initialById.get(id)
+    if (currentRow && initialRow && !rowsEqual(initialRow, currentRow)) {
+      merged.push(currentRow)
+    } else {
+      merged.push(remoteRow)
+    }
+  }
+
+  for (const currentRow of currentRows) {
+    const id = currentRow?.id
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    const initialRow = initialById.get(id)
+    if (!initialRow || !rowsEqual(initialRow, currentRow)) merged.push(currentRow)
+  }
+
+  return merged
+}
+
+function rowsById(list) {
+  const map = new Map()
+  for (const row of Array.isArray(list) ? list : []) {
+    if (row && typeof row.id === 'string' && row.id) map.set(row.id, row)
+  }
+  return map
+}
+
+function rowsEqual(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right)
 }
 
 export function indexedDBWriteOptions() {

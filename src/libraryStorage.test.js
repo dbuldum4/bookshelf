@@ -226,14 +226,49 @@ describe('resolveHydratedLibraryState', () => {
     }).books[0].id).toBe('newer')
   })
 
-  it('adopts newer IDB even when the user edited a stale first-paint snapshot', () => {
+  it('rebases in-flight edits onto a newer IDB snapshot instead of dropping them', () => {
     const current = {
       ...initial,
       books: [{ ...initial.books[0], title: 'Edited stale copy' }],
     }
     const resolved = resolveHydratedLibraryState({ initial, current, remote })
-    expect(resolved.books[0].id).toBe('newer')
-    expect(resolved.savedAt).toBe(99)
+    expect(resolved.books.find((book) => book.id === 'older')?.title).toBe('Edited stale copy')
+    expect(resolved.books.find((book) => book.id === 'newer')?.title).toBe('Indexed')
+    expect(resolved.savedAt).toBeGreaterThanOrEqual(99)
+  })
+
+  it('keeps the edited book when that id also exists on the newer remote', () => {
+    const shared = {
+      books: [{ id: 'dune', title: 'Dune', author: 'A', shelfId: DEFAULT_SHELF_ID }],
+      shelves: [createDefaultShelf()],
+      savedAt: 10,
+    }
+    const current = {
+      ...shared,
+      books: [{ id: 'dune', title: 'Dune annotated', author: 'A', shelfId: DEFAULT_SHELF_ID }],
+    }
+    const remote = {
+      books: [
+        { id: 'dune', title: 'Dune', author: 'A', shelfId: DEFAULT_SHELF_ID, notes: 'other tab' },
+        { id: 'other', title: 'New', author: 'B', shelfId: DEFAULT_SHELF_ID },
+      ],
+      shelves: shared.shelves,
+      savedAt: 99,
+    }
+    const resolved = resolveHydratedLibraryState({ initial: shared, current, remote })
+    expect(resolved.books.find((book) => book.id === 'dune')?.title).toBe('Dune annotated')
+    expect(resolved.books.find((book) => book.id === 'other')?.title).toBe('New')
+  })
+
+  it('keeps a deletion made during hydrate and still picks up remote-only books', () => {
+    const bookA = { id: 'a', title: 'A', author: 'A', shelfId: DEFAULT_SHELF_ID }
+    const bookB = { id: 'b', title: 'B', author: 'B', shelfId: DEFAULT_SHELF_ID }
+    const bookC = { id: 'c', title: 'C', author: 'C', shelfId: DEFAULT_SHELF_ID }
+    const start = { books: [bookA, bookB], shelves: [createDefaultShelf()], savedAt: 10 }
+    const current = { ...start, books: [bookA] }
+    const remote = { books: [bookA, bookB, bookC], shelves: start.shelves, savedAt: 99 }
+    const resolved = resolveHydratedLibraryState({ initial: start, current, remote })
+    expect(resolved.books.map((book) => book.id)).toEqual(['a', 'c'])
   })
 
   it('does not discard a user edit when IDB is not newer', () => {
