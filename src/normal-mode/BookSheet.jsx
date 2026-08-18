@@ -7,9 +7,9 @@ import { Select } from '@/components/ui/select'
 import { Sheet, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Textarea } from '@/components/ui/textarea'
 import {
-  findDuplicateBook,
   lookupBookByIsbn,
   READING_STATUSES,
+  resolveBookSubmit,
   searchAcclaimedBooks,
 } from '../library'
 
@@ -279,9 +279,15 @@ function BookSheet({
       return
     }
     const payload = addPayload()
-    const existing = findDuplicateBook(library, payload)
-    if (existing) {
-      setDuplicate(existing)
+    const decision = resolveBookSubmit(library, payload, { editing: Boolean(book) })
+    if (decision.action === 'update') {
+      onUpdateBook(payload)
+      setLookupError('')
+      setDuplicate(null)
+      return
+    }
+    if (decision.action === 'warn') {
+      setDuplicate(decision.existing)
       setLookupError('')
       return
     }
