@@ -708,6 +708,20 @@ describe('StoryGraph CSV import', () => {
     ])
   })
 
+  it('treats official open-ended YYYY/MM/DD- as started-only', () => {
+    expect(parseStoryGraphDatesRead('2026/06/01-')).toEqual([
+      { startedAt: '2026-06-01', finishedAt: '' },
+    ])
+    expect(parseStoryGraphDatesRead('2026/01/01-2026/01/15, 2026/06/01-')).toEqual([
+      { startedAt: '2026-01-01', finishedAt: '2026-01-15' },
+      { startedAt: '2026-06-01', finishedAt: '' },
+    ])
+    expect(parseStoryGraphDatesRead('2026/06/01–, 2024/03/01-2024/03/20')).toEqual([
+      { startedAt: '2026-06-01', finishedAt: '' },
+      { startedAt: '2024-03-01', finishedAt: '2024-03-20' },
+    ])
+  })
+
   it('imports a StoryGraph fixture with statuses, reads, and formats', () => {
     const result = parseLibraryCsv(readFixture('storygraph-export.csv'))
     expect(result.count).toBe(5)
@@ -747,6 +761,36 @@ describe('StoryGraph CSV import', () => {
       status: 'Reading',
       format: 'physical',
       rating: 4,
+    }))
+  })
+
+  it('prefers Last Date Read over newest-first or open-ended Dates Read', () => {
+    const csv = [
+      'Title,Authors,Read Status,Last Date Read,Dates Read',
+      '"Reread","A. Author","read","2026/01/15","2026/01/01-2026/01/15, 2024/03/01-2024/03/20"',
+      '"Rereading","B. Author","currently-reading","2026/01/15","2026/06/01-, 2026/01/01-2026/01/15"',
+    ].join('\n')
+
+    const result = parseLibraryCsv(csv)
+    expect(result.books[0]).toEqual(expect.objectContaining({
+      title: 'Reread',
+      status: 'Finished',
+      finishedAt: '2026-01-15',
+      startedAt: '2024-03-01',
+      reads: [
+        { startedAt: '2026-01-01', finishedAt: '2026-01-15' },
+        { startedAt: '2024-03-01', finishedAt: '2024-03-20' },
+      ],
+    }))
+    expect(result.books[1]).toEqual(expect.objectContaining({
+      title: 'Rereading',
+      status: 'Reading',
+      finishedAt: '2026-01-15',
+      startedAt: '2026-01-01',
+      reads: [
+        { startedAt: '2026-06-01', finishedAt: '' },
+        { startedAt: '2026-01-01', finishedAt: '2026-01-15' },
+      ],
     }))
   })
 
@@ -897,6 +941,20 @@ describe('merge import', () => {
     expect(result.updated).toBe(2)
     expect(result.added).toBe(0)
     expect(result.books.find((book) => book.id === 'keep').rating).toBe(4)
+  })
+
+  it('applies incoming Did Not Finish over Reading', () => {
+    const dnfOverReading = mergeBookRecords(
+      { id: '1', title: 'T', author: 'A', status: 'Reading', shelfId: DEFAULT_SHELF_ID },
+      { id: '1', title: 'T', author: 'A', status: 'Did Not Finish', shelfId: DEFAULT_SHELF_ID },
+    )
+    expect(dnfOverReading.status).toBe('Did Not Finish')
+
+    const keepsDnf = mergeBookRecords(
+      { id: '1', title: 'T', author: 'A', status: 'Did Not Finish', shelfId: DEFAULT_SHELF_ID },
+      { id: '1', title: 'T', author: 'A', status: 'Reading', shelfId: DEFAULT_SHELF_ID },
+    )
+    expect(keepsDnf.status).toBe('Did Not Finish')
   })
 
   it('appends differing notes instead of dropping import text', () => {

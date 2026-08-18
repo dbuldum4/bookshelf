@@ -835,8 +835,8 @@ const STATUS_RANK = {
   'Want to Read': 0,
   Paused: 1,
   Reading: 2,
-  'Did Not Finish': 2,
-  Finished: 3,
+  'Did Not Finish': 3,
+  Finished: 4,
 }
 
 function normalizeMatchKey(title, author) {
@@ -1294,19 +1294,20 @@ export function parseStoryGraphDatesRead(value) {
   if (!raw) return []
   const reads = []
   for (const part of raw.split(',').map((entry) => entry.trim()).filter(Boolean)) {
-    const slashRange = part.match(/^(\d{4}\/\d{1,2}\/\d{1,2})\s*[-–]\s*(\d{4}\/\d{1,2}\/\d{1,2})$/)
+    // Official in-progress token is YYYY/MM/DD- ; Date.parse would treat that as a finish.
+    const slashRange = part.match(/^(\d{4}\/\d{1,2}\/\d{1,2})\s*[-–]\s*(\d{4}\/\d{1,2}\/\d{1,2})?$/)
     if (slashRange) {
       reads.push({
         startedAt: parseLooseDate(slashRange[1]),
-        finishedAt: parseLooseDate(slashRange[2]),
+        finishedAt: slashRange[2] ? parseLooseDate(slashRange[2]) : '',
       })
       continue
     }
-    const isoRange = part.match(/^(\d{4}-\d{2}-\d{2})\s*[-–]\s*(\d{4}-\d{2}-\d{2})$/)
+    const isoRange = part.match(/^(\d{4}-\d{2}-\d{2})\s*[-–]\s*(\d{4}-\d{2}-\d{2})?$/)
     if (isoRange) {
       reads.push({
         startedAt: parseLooseDate(isoRange[1]),
-        finishedAt: parseLooseDate(isoRange[2]),
+        finishedAt: isoRange[2] ? parseLooseDate(isoRange[2]) : '',
       })
       continue
     }
@@ -1422,9 +1423,13 @@ export function parseLibraryCsv(text) {
     let reads = []
     if (hasDatesRead) {
       reads = parseStoryGraphDatesRead(row['dates read'] || '')
-      const lastRead = reads[reads.length - 1]
-      if (lastRead?.finishedAt) finishedAt = lastRead.finishedAt
-      if (!startedAt && reads[0]?.startedAt) startedAt = reads[0].startedAt
+      // Prefer Last Date Read; newest-first or open-ended tokens can be older than the real finish.
+      if (!finishedAt) {
+        finishedAt = reads.reduce((latest, read) => laterIso(latest, read.finishedAt), '')
+      }
+      if (!startedAt) {
+        startedAt = reads.reduce((earliest, read) => earlierIso(earliest, read.startedAt), '')
+      }
     }
     const createdAt = parseLooseDate(cell(row, ['date added', 'created at', 'added']))
     const notes = cell(row, ['review', 'my review', 'private notes', 'notes'])
