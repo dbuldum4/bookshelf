@@ -37,8 +37,12 @@ import {
   reorderBookOnShelf,
   reorderBookToIndex,
   ROOM_LAYOUT_BOUND,
+  lookupBookByTitleAuthor,
+  mergeBlankBookMetadata,
+  UNKNOWN_AUTHOR,
   sanitizeCoverUrl,
   saveLibrary,
+  wait,
   saveLibraryState,
   SHELF_ROWS_MAX,
   SHELF_WIDTH_MAX,
@@ -218,6 +222,161 @@ describe('normalize and sanitize', () => {
       },
     ]))
     expect(result.books[0].coverUrl).toBe('')
+  })
+
+  it('keeps publishedYear when normalizing and exporting', () => {
+    const state = normalizeLibraryState({
+      books: [{ title: 'Dune', author: 'Frank Herbert', publishedYear: 1965 }],
+      shelves: [createDefaultShelf()],
+    })
+    expect(state.books[0].publishedYear).toBe(1965)
+  })
+})
+
+describe('blank-only metadata merge', () => {
+  const existingCover = 'https://covers.openlibrary.org/b/id/1-M.jpg'
+  const incomingCover = 'https://covers.openlibrary.org/b/id/99-M.jpg'
+
+  it('does not clobber existing isbn/cover', () => {
+    const merged = mergeBlankBookMetadata(
+      { isbn: '9780441172719', coverUrl: existingCover, pageCount: 0, publishedYear: 0 },
+      { isbn: '9780141439518', coverUrl: incomingCover, pageCount: 412, publishedYear: 1965 },
+    )
+    expect(merged.isbn).toBe('9780441172719')
+    expect(merged.coverUrl).toBe(existingCover)
+    expect(merged.pageCount).toBe(412)
+    expect(merged.publishedYear).toBe(1965)
+  })
+
+  it('fills only blank isbn, pageCount, coverUrl, and publishedYear', () => {
+    const merged = mergeBlankBookMetadata(
+      { isbn: '', coverUrl: '', pageCount: 0, publishedYear: '' },
+      { isbn: '9780441172719', coverUrl: incomingCover, pageCount: 412, publishedYear: 1965 },
+    )
+    expect(merged).toEqual({
+      isbn: '9780441172719',
+      pageCount: 412,
+      coverUrl: incomingCover,
+      publishedYear: 1965,
+    })
+  })
+
+  it('sanitizes incoming cover URLs when filling a blank cover', () => {
+    const merged = mergeBlankBookMetadata(
+      { isbn: '', coverUrl: '', pageCount: 0, publishedYear: 0 },
+      { isbn: '9780441172719', coverUrl: 'https://evil.example/x.jpg', pageCount: 100, publishedYear: 1925 },
+    )
+    expect(merged.coverUrl).toBe('')
+    expect(merged.isbn).toBe('9780441172719')
+  })
+
+  it('does not clobber newer fields when applied to the latest book', () => {
+    const incoming = {
+      isbn: '9780441172719',
+      coverUrl: incomingCover,
+      pageCount: 412,
+      publishedYear: 1965,
+    }
+    const startedBlank = { isbn: '', coverUrl: '', pageCount: 0, publishedYear: 0 }
+    expect(mergeBlankBookMetadata(startedBlank, incoming)).toEqual({
+      isbn: '9780441172719',
+      pageCount: 412,
+      coverUrl: incomingCover,
+      publishedYear: 1965,
+    })
+
+    const latest = {
+      isbn: '9780141439518',
+      coverUrl: existingCover,
+      pageCount: 88,
+      publishedYear: 1925,
+    }
+    expect(mergeBlankBookMetadata(latest, incoming)).toEqual({
+      isbn: '9780141439518',
+      pageCount: 88,
+      coverUrl: existingCover,
+      publishedYear: 1925,
+    })
+  })
+})
+
+describe('title/author lookup', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('maps Open Library search results to isbn, pages, cover, and year', async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        docs: [{
+          title: 'Dune',
+          author_name: ['Frank Herbert'],
+          isbn: ['9780441172719'],
+          cover_i: 12345,
+          first_publish_year: 1965,
+          number_of_pages_median: 412,
+        }],
+      }),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(lookupBookByTitleAuthor('Dune', 'Frank Herbert')).resolves.toEqual({
+      isbn: '9780441172719',
+      pageCount: 412,
+      coverUrl: 'https://covers.openlibrary.org/b/id/12345-M.jpg',
+      publishedYear: 1965,
+    })
+    expect(new URL(String(fetchMock.mock.calls[0][0])).searchParams.get('author')).toBe('Frank Herbert')
+  })
+
+  it('omits Unknown author from the lookup query', async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        docs: [{
+          title: 'Dune',
+          isbn: ['9780441172719'],
+          cover_i: 1,
+          first_publish_year: 1965,
+          number_of_pages_median: 412,
+        }],
+      }),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await lookupBookByTitleAuthor('Dune', UNKNOWN_AUTHOR)
+    await lookupBookByTitleAuthor('Dune', '  unknown author  ')
+    await lookupBookByTitleAuthor('Dune', '')
+
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    for (const [url] of fetchMock.mock.calls) {
+      const params = new URL(String(url)).searchParams
+      expect(params.get('title')).toBe('Dune')
+      expect(params.has('author')).toBe(false)
+    }
+  })
+
+  it('throws a safe error on HTTP failure', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 503 })))
+    await expect(lookupBookByTitleAuthor('Dune', 'Herbert')).rejects.toThrow(/unavailable/i)
+  })
+
+  it('does not wrap abort errors', async () => {
+    const abortError = new Error('Aborted')
+    abortError.name = 'AbortError'
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw abortError
+    }))
+    await expect(lookupBookByTitleAuthor('Dune', 'Herbert')).rejects.toMatchObject({ name: 'AbortError' })
+  })
+
+  it('rejects wait() when aborted', async () => {
+    const controller = new AbortController()
+    const pending = wait(50_000, controller.signal)
+    controller.abort()
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
   })
 })
 

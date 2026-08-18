@@ -7,12 +7,15 @@ import {
   LIBRARY_SORT_OPTIONS,
   loadReadingGoals,
   lookupBookByIsbn,
+  lookupBookByTitleAuthor,
+  mergeBlankBookMetadata,
   normalizeReadingGoals,
   parseLibraryFile,
   READING_STATUSES,
   saveReadingGoals,
   searchAcclaimedBooks,
   sortLibrary,
+  wait,
 } from '../library'
 
 const fontFamily =
@@ -130,6 +133,9 @@ const MAX_IMPORT_BYTES = 5_000_000
 
 function CoverThumb({ coverUrl, color }) {
   const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    setFailed(false)
+  }, [coverUrl])
   if (!coverUrl || failed) {
     return (
       <span
@@ -167,6 +173,7 @@ function LibraryPanel({
   onMergeLibrary,
   onReorderBook,
   onBackupExported,
+  onUpdateBook,
 }) {
   const [open, setOpen] = useState(true)
   const [adding, setAdding] = useState(false)
@@ -199,6 +206,11 @@ function LibraryPanel({
   const importInputRef = useRef(null)
   const transferTimer = useRef(null)
   const isbnRequestId = useRef(0)
+  const fillAbortRef = useRef(null)
+  const fillingCoversRef = useRef(false)
+  const libraryRef = useRef(library)
+  libraryRef.current = library
+  const [fillingCovers, setFillingCovers] = useState(false)
 
   const clearTransferFeedback = () => {
     setTransferMessage('')
@@ -382,6 +394,7 @@ function LibraryPanel({
   useEffect(() => () => {
     if (blurTimer.current !== null) window.clearTimeout(blurTimer.current)
     if (transferTimer.current !== null) window.clearTimeout(transferTimer.current)
+    fillAbortRef.current?.abort()
   }, [])
 
   const changeDraft = (field, value) => setDraft((current) => ({ ...current, [field]: value }))
@@ -525,6 +538,94 @@ function LibraryPanel({
       setShowSuggestions(false)
       blurTimer.current = null
     }, 150)
+  }
+
+  const cancelFillCovers = () => {
+    fillAbortRef.current?.abort()
+  }
+
+  const fillMissingCovers = async () => {
+    if (fillingCoversRef.current || typeof onUpdateBook !== 'function') return
+    const missing = library.filter((book) => !book.coverUrl)
+    if (!missing.length) {
+      showTransferFeedback('Every book already has a cover.')
+      return
+    }
+
+    const controller = new AbortController()
+    fillAbortRef.current = controller
+    fillingCoversRef.current = true
+    setFillingCovers(true)
+    let filled = 0
+    let stopped = false
+    let failed = 0
+    let attempted = 0
+    let lastError = ''
+
+    try {
+      for (let index = 0; index < missing.length; index += 1) {
+        if (controller.signal.aborted) {
+          stopped = true
+          break
+        }
+        const queued = missing[index]
+        try {
+          const latestForQuery = libraryRef.current.find((entry) => entry.id === queued.id) || queued
+          attempted += 1
+          const result = await lookupBookByTitleAuthor(
+            latestForQuery.title,
+            latestForQuery.author,
+            controller.signal,
+          )
+          if (controller.signal.aborted) {
+            stopped = true
+            break
+          }
+          const live = libraryRef.current.find((entry) => entry.id === queued.id)
+          if (!live) continue
+          const updates = mergeBlankBookMetadata(live, result)
+          if (!live.coverUrl && updates.coverUrl) filled += 1
+          onUpdateBook(queued.id, (current) => mergeBlankBookMetadata(current, result))
+        } catch (error) {
+          if (error?.name === 'AbortError' || controller.signal.aborted) {
+            stopped = true
+            break
+          }
+          failed += 1
+          lastError = error instanceof Error ? error.message : 'Could not fill missing covers.'
+        }
+        if (index < missing.length - 1 && !controller.signal.aborted) {
+          try {
+            await wait(200, controller.signal)
+          } catch (error) {
+            if (error?.name === 'AbortError' || controller.signal.aborted) {
+              stopped = true
+              break
+            }
+          }
+        }
+      }
+    } catch (error) {
+      if (error?.name !== 'AbortError') {
+        showTransferFeedback(error instanceof Error ? error.message : 'Could not fill missing covers.', true)
+        return
+      }
+      stopped = true
+    } finally {
+      fillingCoversRef.current = false
+      setFillingCovers(false)
+      fillAbortRef.current = null
+    }
+
+    if (!stopped && filled === 0 && failed > 0 && failed === attempted) {
+      showTransferFeedback(lastError || 'Could not fill missing covers.', true)
+      return
+    }
+
+    const countLabel = `${filled} cover${filled === 1 ? '' : 's'}`
+    showTransferFeedback(stopped
+      ? `Stopped after filling ${countLabel}.`
+      : `Filled ${countLabel}.`)
   }
 
   const findByIsbn = async () => {
@@ -1063,6 +1164,29 @@ function LibraryPanel({
           style={{ display: 'none' }}
         />
       </div>
+
+      {typeof onUpdateBook === 'function' && (
+        <div style={{ display: 'flex', gap: 8, padding: '0 16px 10px' }}>
+          <button
+            type="button"
+            onClick={fillMissingCovers}
+            disabled={fillingCovers || !library.some((book) => !book.coverUrl)}
+            style={{
+              ...actionButton(),
+              flex: 1,
+              cursor: fillingCovers || !library.some((book) => !book.coverUrl) ? 'default' : 'pointer',
+              opacity: fillingCovers || !library.some((book) => !book.coverUrl) ? 0.45 : 1,
+            }}
+          >
+            {fillingCovers ? 'Filling covers…' : 'Fill missing covers'}
+          </button>
+          {fillingCovers ? (
+            <button type="button" onClick={cancelFillCovers} style={actionButton(true)}>
+              Cancel
+            </button>
+          ) : null}
+        </div>
+      )}
 
       {pendingImport && (
         <div

@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { READING_STATUSES } from '../library'
+import { useEffect, useRef, useState } from 'react'
+import { lookupBookByTitleAuthor, mergeBlankBookMetadata, READING_STATUSES } from '../library'
 
 const fontFamily =
   '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif'
@@ -27,11 +27,26 @@ const labelStyle = {
 function BookDetails({ book, shelves = [], onUpdate, onDelete, onClose, onReorder }) {
   const [tagsDraft, setTagsDraft] = useState(null) // null = not editing
   const [coverFailed, setCoverFailed] = useState(false)
+  const [lookupError, setLookupError] = useState('')
+  const [lookingUp, setLookingUp] = useState(false)
+  const lookupAbort = useRef(null)
+  const lookupRequestId = useRef(0)
 
   useEffect(() => {
     setTagsDraft(null)
     setCoverFailed(false)
+    setLookupError('')
+    lookupAbort.current?.abort()
+    lookupAbort.current = null
   }, [book?.id])
+
+  useEffect(() => () => {
+    lookupAbort.current?.abort()
+  }, [])
+
+  useEffect(() => {
+    setCoverFailed(false)
+  }, [book?.coverUrl])
 
   if (!book) return null
 
@@ -52,6 +67,27 @@ function BookDetails({ book, shelves = [], onUpdate, onDelete, onClose, onReorde
 
   const removeQuote = (index) => {
     onUpdate({ quotes: quotes.filter((_, quoteIndex) => quoteIndex !== index) })
+  }
+
+  const findCoverAndDetails = async () => {
+    const requestId = ++lookupRequestId.current
+    lookupAbort.current?.abort()
+    const controller = new AbortController()
+    lookupAbort.current = controller
+    setLookingUp(true)
+    setLookupError('')
+    try {
+      const result = await lookupBookByTitleAuthor(book.title, book.author, controller.signal)
+      if (requestId !== lookupRequestId.current || controller.signal.aborted) return
+      // Merge against the live book so ISBN/cover/year typed during the spinner stay.
+      onUpdate((current) => mergeBlankBookMetadata(current, result))
+      setCoverFailed(false)
+    } catch (error) {
+      if (error?.name === 'AbortError' || controller.signal.aborted || requestId !== lookupRequestId.current) return
+      setLookupError(error instanceof Error ? error.message : 'Could not look up that book.')
+    } finally {
+      if (requestId === lookupRequestId.current) setLookingUp(false)
+    }
   }
 
   return (
@@ -241,6 +277,42 @@ function BookDetails({ book, shelves = [], onUpdate, onDelete, onClose, onReorde
         <div>
           <label htmlFor="book-isbn" style={labelStyle}>ISBN</label>
           <input id="book-isbn" value={book.isbn} onChange={(event) => onUpdate({ isbn: event.target.value })} placeholder="ISBN-10 or ISBN-13" style={{ ...fieldStyle, height: 40, padding: '0 11px' }} />
+        </div>
+        <div>
+          <label htmlFor="book-published" style={labelStyle}>Published year</label>
+          <input
+            id="book-published"
+            min="1"
+            max="3000"
+            type="number"
+            value={book.publishedYear || ''}
+            onChange={(event) => onUpdate({ publishedYear: event.target.value })}
+            placeholder="—"
+            style={{ ...fieldStyle, height: 40, padding: '0 11px' }}
+          />
+        </div>
+        <div>
+          <button
+            type="button"
+            onClick={findCoverAndDetails}
+            disabled={lookingUp}
+            style={{
+              width: '100%',
+              border: '1px solid rgba(169, 131, 255, 0.45)',
+              borderRadius: 10,
+              color: '#fff',
+              background: 'rgba(126, 91, 226, 0.28)',
+              cursor: lookingUp ? 'default' : 'pointer',
+              padding: '9px 11px',
+              font: `600 12px ${fontFamily}`,
+              opacity: lookingUp ? 0.7 : 1,
+            }}
+          >
+            {lookingUp ? 'Looking up…' : 'Find cover and details'}
+          </button>
+          {lookupError ? (
+            <p role="alert" style={{ margin: '8px 0 0', color: '#ffb4b4', fontSize: 12 }}>{lookupError}</p>
+          ) : null}
         </div>
         <div>
           <label htmlFor="book-notes" style={labelStyle}>Notes</label>
