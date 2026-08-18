@@ -40,11 +40,16 @@ import {
   sanitizeCoverUrl,
   saveLibrary,
   saveLibraryState,
+  SHELF_OVERLAP_GAP,
   SHELF_ROWS_MAX,
   SHELF_WIDTH_MAX,
+  shelfFootprint,
   shelfRowYs,
+  shelvesOverlap,
   shouldRemindLibraryBackup,
+  snapShelfPosition,
   sortLibrary,
+  tryMoveShelf,
   tryReorderBookOnShelf,
   tryReorderBookToIndex,
 } from './library'
@@ -897,5 +902,75 @@ describe('room presets', () => {
     expect(clamped.adjusted).toBe(true)
     expect(Math.abs(clamped.shelves[0].x)).toBeLessThan(ROOM_LAYOUT_BOUND)
     expect(Math.abs(clamped.shelves[0].z)).toBeLessThan(ROOM_LAYOUT_BOUND)
+  })
+})
+
+describe('arrange snap and collision', () => {
+  it('snaps floor positions to a 0.5 grid by default', () => {
+    expect(snapShelfPosition(0.24, 0.26)).toEqual({ x: 0, z: 0.5 })
+    expect(snapShelfPosition(-0.26, 1.24)).toEqual({ x: -0.5, z: 1 })
+    expect(snapShelfPosition(0.5, -1.5)).toEqual({ x: 0.5, z: -1.5 })
+    expect(snapShelfPosition(2.4, -1.76, 1)).toEqual({ x: 2, z: -2 })
+  })
+
+  it('detects overlap for shelves at 90-degree yaw', () => {
+    const a = createShelf({ id: 'a', x: 0, z: 0, yaw: 0, width: 6 })
+    const b = createShelf({ id: 'b', x: 0, z: 2, yaw: Math.PI / 2, width: 6 })
+    const flat = shelfFootprint(a)
+    const turned = shelfFootprint(b)
+    expect(turned.maxZ - turned.minZ).toBeGreaterThan(turned.maxX - turned.minX)
+    expect(flat.maxX - flat.minX).toBeGreaterThan(flat.maxZ - flat.minZ)
+    expect(shelvesOverlap(a, b)).toBe(true)
+
+    const extZ = (turned.maxZ - turned.minZ) / 2
+    const clear = createShelf({
+      id: 'b',
+      x: 0,
+      z: flat.maxZ + SHELF_OVERLAP_GAP + extZ + 1e-6,
+      yaw: Math.PI / 2,
+      width: 6,
+    })
+    expect(shelvesOverlap(a, clear)).toBe(false)
+  })
+
+  it('requires a 0.15 gap between shelf footprints', () => {
+    const a = createShelf({ id: 'a', x: 0, z: 0, yaw: 0, width: 4 })
+    const box = shelfFootprint(a)
+    const extX = (box.maxX - box.minX) / 2
+    const clear = createShelf({
+      id: 'b',
+      x: box.maxX + SHELF_OVERLAP_GAP + extX + 1e-6,
+      z: 0,
+      yaw: 0,
+      width: 4,
+    })
+    const tight = createShelf({
+      id: 'b',
+      x: box.maxX + 0.14 + extX,
+      z: 0,
+      yaw: 0,
+      width: 4,
+    })
+    expect(shelfFootprint(clear).minX - box.maxX).toBeGreaterThanOrEqual(SHELF_OVERLAP_GAP)
+    expect(shelfFootprint(tight).minX - box.maxX).toBeLessThan(SHELF_OVERLAP_GAP)
+    expect(shelvesOverlap(a, clear)).toBe(false)
+    expect(shelvesOverlap(a, tight)).toBe(true)
+    expect(SHELF_OVERLAP_GAP).toBe(0.15)
+  })
+
+  it('rejects an overlapping snap and keeps the last valid pose', () => {
+    const shelves = [
+      createShelf({ id: 'a', x: 0, z: 0, yaw: 0, width: 6 }),
+      createShelf({ id: 'b', x: 10, z: 0, yaw: 0, width: 6 }),
+    ]
+    const blocked = tryMoveShelf(shelves, 'b', { x: 0.2, z: 0.1 })
+    expect(blocked.ok).toBe(false)
+    expect(blocked.shelves[1].x).toBe(10)
+    expect(blocked.shelves[1].z).toBe(0)
+
+    const moved = tryMoveShelf(shelves, 'b', { x: 12.24, z: 0.26 })
+    expect(moved.ok).toBe(true)
+    expect(moved.shelves[1].x).toBe(12)
+    expect(moved.shelves[1].z).toBe(0.5)
   })
 })

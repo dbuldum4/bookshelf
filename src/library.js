@@ -965,6 +965,90 @@ export const ROOM_PRESETS = [
 
 const ROOM_PRESET_GAP = 1.15
 const CASE_DEPTH_HALF = 0.9
+const CASE_WIDTH_PAD = 0.4
+
+export const SHELF_SNAP_STEP = 0.5
+export const SHELF_OVERLAP_GAP = 0.15
+
+/** Snap a floor position onto the arrange grid. */
+export function snapShelfPosition(x, z, step = SHELF_SNAP_STEP) {
+  const raw = Number(step)
+  const size = Number.isFinite(raw) && raw > 0 ? raw : SHELF_SNAP_STEP
+  const snap = (value) => {
+    const n = Number(value)
+    if (!Number.isFinite(n)) return 0
+    return Math.round(n / size) * size
+  }
+  return { x: snap(x), z: snap(z) }
+}
+
+/**
+ * World-space AABB of a case. Local width is X, depth is Z; yaw rotates that
+ * rectangle so a 90° case swaps its long axis onto world Z.
+ */
+export function shelfFootprint(shelf) {
+  const width = Number(shelf?.width)
+  const halfW = ((Number.isFinite(width) && width > 0 ? width : DEFAULT_SHELF_WIDTH) / 2) + CASE_WIDTH_PAD
+  const yaw = Number(shelf?.yaw) || 0
+  const x = Number(shelf?.x)
+  const z = Number(shelf?.z)
+  const cx = Number.isFinite(x) ? x : 0
+  const cz = Number.isFinite(z) ? z : 0
+  const cos = Math.abs(Math.cos(yaw))
+  const sin = Math.abs(Math.sin(yaw))
+  const extX = halfW * cos + CASE_DEPTH_HALF * sin
+  const extZ = halfW * sin + CASE_DEPTH_HALF * cos
+  return {
+    minX: cx - extX,
+    maxX: cx + extX,
+    minZ: cz - extZ,
+    maxZ: cz + extZ,
+  }
+}
+
+/** True when two case AABBs interpenetrate or sit closer than `gap`. */
+export function shelvesOverlap(a, b, gap = SHELF_OVERLAP_GAP) {
+  if (!a || !b || a === b) return false
+  if (a.id && b.id && a.id === b.id) return false
+  const pad = Number(gap)
+  const clearance = Number.isFinite(pad) ? pad : SHELF_OVERLAP_GAP
+  const boxA = shelfFootprint(a)
+  const boxB = shelfFootprint(b)
+  return (
+    boxA.minX < boxB.maxX + clearance
+    && boxA.maxX + clearance > boxB.minX
+    && boxA.minZ < boxB.maxZ + clearance
+    && boxA.maxZ + clearance > boxB.minZ
+  )
+}
+
+/**
+ * Snap an Arrange drag onto the grid. Overlapping drops are rejected so the
+ * caller can keep the last valid pose.
+ */
+export function tryMoveShelf(shelves, shelfId, position = {}) {
+  const list = Array.isArray(shelves) ? shelves : []
+  const current = list.find((shelf) => shelf.id === shelfId)
+  if (!current) {
+    return { ok: false, reason: 'That shelf does not exist.', shelves: list }
+  }
+  const snapped = snapShelfPosition(position.x, position.z)
+  const next = { ...current, x: snapped.x, z: snapped.z }
+  if (list.some((other) => other.id !== shelfId && shelvesOverlap(next, other))) {
+    return {
+      ok: false,
+      reason: 'That spot overlaps another shelf. Leave a small gap and try a nearby grid cell.',
+      shelves: list,
+    }
+  }
+  if (current.x === next.x && current.z === next.z) {
+    return { ok: true, shelves: list }
+  }
+  return {
+    ok: true,
+    shelves: list.map((shelf) => (shelf.id === shelfId ? next : shelf)),
+  }
+}
 
 function layoutShelvesInRow(shelves, { z, yaw, startX = null }) {
   const total = shelves.reduce(
@@ -995,16 +1079,11 @@ export function clampShelvesToRoom(shelves, bound = ROOM_LAYOUT_BOUND) {
   let maxZ = -Infinity
 
   for (const shelf of list) {
-    const halfW = (shelf.width || DEFAULT_SHELF_WIDTH) / 2 + 0.4
-    const yaw = shelf.yaw || 0
-    const cos = Math.abs(Math.cos(yaw))
-    const sin = Math.abs(Math.sin(yaw))
-    const extX = halfW * cos + CASE_DEPTH_HALF * sin
-    const extZ = halfW * sin + CASE_DEPTH_HALF * cos
-    minX = Math.min(minX, shelf.x - extX)
-    maxX = Math.max(maxX, shelf.x + extX)
-    minZ = Math.min(minZ, shelf.z - extZ)
-    maxZ = Math.max(maxZ, shelf.z + extZ)
+    const box = shelfFootprint(shelf)
+    minX = Math.min(minX, box.minX)
+    maxX = Math.max(maxX, box.maxX)
+    minZ = Math.min(minZ, box.minZ)
+    maxZ = Math.max(maxZ, box.maxZ)
   }
 
   const spanX = Math.max(1e-6, maxX - minX)
