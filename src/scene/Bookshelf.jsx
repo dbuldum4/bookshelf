@@ -1085,15 +1085,9 @@ function Bookshelf({
       ))}
 
       {mode === 'play' && (
-        // Visual floor at y=-0.5; half-extent 0.5 → top surface at -0.5 when center is -1.0
+        // Hidden physics floor; top surface at y=-0.5 (matches the visible room floor).
         <CuboidCollider position={[0, -1.0, 0]} args={[80, 0.5, 80]} />
       )}
-
-      {/* Floor disc for grounding the room */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.5, 0]} receiveShadow>
-        <circleGeometry args={[48, 64]} />
-        <meshStandardMaterial color="#12081f" roughness={0.95} metalness={0.05} />
-      </mesh>
     </group>
   )
 }

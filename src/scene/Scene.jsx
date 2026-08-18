@@ -5,6 +5,7 @@ import { DEFAULT_GRAPHICS_QUALITY, getGraphicsPreset } from '../graphicsQuality'
 import Bookshelf from './Bookshelf'
 import CameraRig from './CameraRig'
 import { DeepSpaceStars, Galaxy, NebulaLayer, RealisticGalaxy } from './Galaxy'
+import RoomFloor from './RoomFloor'
 
 const GALAXY_BACKDROP_POSITION = [-7, 5.4, -24]
 const GALAXY_BACKDROP_ROTATION = [Math.PI * 0.42, 0.22, -0.28]
@@ -181,6 +182,8 @@ function Scene({
       ) : (
         room
       )}
+
+      <RoomFloor graphics={graphics} />
 
       {graphics.contactShadows && (
         <ContactShadows
