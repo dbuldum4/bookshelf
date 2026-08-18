@@ -38,6 +38,7 @@ import {
   tryReorderBookOnShelf,
   tryReorderBookToIndex,
 } from './library'
+import { loadLibraryStateAsync } from './libraryStorage'
 import Scene from './scene/Scene'
 import { isWebGLAvailable } from './webgl'
 import { loadViewMode, saveViewMode } from './viewMode'
@@ -175,6 +176,7 @@ export default function App() {
     () => storedMotionPreference != null
   )
   const [libraryState, setLibraryState] = useState(() => initialLibraryRef.current.libraryState)
+  const [storageEpoch, setStorageEpoch] = useState(0)
   const [selectedBookId, setSelectedBookId] = useState(null)
   const [selectedShelfId, setSelectedShelfId] = useState(
     () => initialLibraryRef.current.selectedShelfId
@@ -195,10 +197,34 @@ export default function App() {
   )
 
   useEffect(() => {
+    let cancelled = false
+    loadLibraryStateAsync()
+      .then((remote) => {
+        if (cancelled) return
+        setLibraryState((current) => {
+          // Keep in-progress edits if the user changed state before IDB resolved.
+          if (current !== initialLibraryRef.current.libraryState) return current
+          const remoteAt = Number(remote?.savedAt) || 0
+          const currentAt = Number(current?.savedAt) || 0
+          return remoteAt > currentAt ? remote : current
+        })
+        setStorageEpoch((value) => (value === 0 ? 1 : value))
+      })
+      .catch(() => {
+        if (!cancelled) setStorageEpoch((value) => (value === 0 ? 1 : value))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    // Wait until IndexedDB has been checked so first paint cannot clobber a newer snapshot.
+    if (storageEpoch === 0) return
     if (!saveLibraryState(libraryState)) {
       setStatusMessage('Could not save library to this browser. Storage may be full or disabled.')
     }
-  }, [libraryState])
+  }, [libraryState, storageEpoch])
 
   useEffect(() => {
     setBackupReminder(shouldRemindLibraryBackup({ bookCount: libraryState.books.length }))
