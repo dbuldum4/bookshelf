@@ -699,6 +699,7 @@ export default function App() {
           onDeleteShelf={handleDeleteShelf}
           onApplyRoomPreset={handleApplyRoomPreset}
           onExport={handleBackupExport}
+          onBackupExported={handleBackupExported}
           onToggle3D={() => setViewMode('3d')}
           onStatus={flashStatus}
           reducedMotion={reducedMotion}

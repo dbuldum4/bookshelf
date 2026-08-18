@@ -20,11 +20,14 @@ import {
   deleteEmptyShelf,
   dismissLibraryBackupReminder,
   ensureLibraryCapacity,
+  exclusiveShelfFromStatus,
+  libraryToCsv,
   loadLibrary,
   loadLibraryState,
   loadReadingGoals,
   markLibraryBackupDone,
   normalizeReadingGoals,
+  parseCsvLine,
   mergeBookRecords,
   mergeLibraryStates,
   mergeNotes,
@@ -32,6 +35,7 @@ import {
   parseLibraryCsv,
   parseLibraryFile,
   parseLibraryImport,
+  READING_STATUSES,
   saveReadingGoals,
   insertionIndexFromLocalPoint,
   reorderBookOnShelf,
@@ -660,6 +664,93 @@ describe('csv and json import', () => {
     expect(result.books[1].isbn).toBe('')
     expect(result.books[2].isbn).toBe('')
     expect(result.books[3].isbn).toBe('')
+  })
+})
+
+describe('csv export', () => {
+  const csvHeader = 'Title,Author,ISBN,Exclusive Shelf,My Rating,Number of Pages,Current Page,Date Started,Date Read,Date Added,Bookshelves,My Review,Shelf,Color,Quotes'
+
+  it('writes the expected CSV header', () => {
+    const csv = libraryToCsv({
+      books: [{ title: 'Dune', author: 'Frank Herbert', shelfId: DEFAULT_SHELF_ID }],
+      shelves: [createDefaultShelf()],
+    })
+    expect(csv.split('\n')[0]).toBe(csvHeader)
+  })
+
+  it('quotes fields according to RFC 4180', () => {
+    const csv = libraryToCsv({
+      books: [{
+        title: 'Hello, "World"',
+        author: 'Ann "Quote" Author',
+        isbn: '9780441172719',
+        status: 'Reading',
+        rating: 4,
+        pageCount: 100,
+        currentPage: 20,
+        startedAt: '2026-01-02',
+        finishedAt: '',
+        createdAt: '2026-01-01T12:00:00.000Z',
+        tags: ['sci-fi', 'classics'],
+        notes: 'Line 1\nHe said "wow"',
+        quotes: ['First', 'Has a | pipe'],
+        color: '#b3303a',
+        shelfId: DEFAULT_SHELF_ID,
+      }],
+      shelves: [createDefaultShelf()],
+    })
+
+    const headerLine = csv.split('\n')[0]
+    const row = csv.slice(headerLine.length + 1).replace(/\n$/, '')
+    expect(headerLine).toBe(csvHeader)
+    expect(row).toContain('"Hello, ""World"""')
+    expect(row).toContain('"Ann ""Quote"" Author"')
+    expect(row).toContain('"sci-fi, classics"')
+    expect(row).toContain('"Line 1\nHe said ""wow"""')
+
+    expect(parseCsvLine(row)).toEqual([
+      'Hello, "World"',
+      'Ann "Quote" Author',
+      '9780441172719',
+      'currently-reading',
+      '4',
+      '100',
+      '20',
+      '2026-01-02',
+      '',
+      '2026-01-01',
+      'sci-fi, classics',
+      'Line 1\nHe said "wow"',
+      'Library',
+      '#b3303a',
+      'First | Has a | pipe',
+    ])
+  })
+
+  it('maps reading status to exclusive shelf values', () => {
+    const extra = createShelf({ id: 'fiction', name: 'Fiction' }, 1)
+    const csv = libraryToCsv({
+      books: [
+        { title: 'Queued', author: 'A', status: 'Want to Read', shelfId: DEFAULT_SHELF_ID },
+        { title: 'Current', author: 'B', status: 'Reading', shelfId: 'fiction' },
+        { title: 'Done', author: 'C', status: 'Finished', shelfId: DEFAULT_SHELF_ID },
+      ],
+      shelves: [createDefaultShelf(), extra],
+    })
+
+    const rows = csv.trimEnd().split('\n').slice(1).map((line) => parseCsvLine(line))
+    expect(rows.map((cells) => cells[3])).toEqual(['to-read', 'currently-reading', 'read'])
+    expect(rows[1][12]).toBe('Fiction')
+
+    expect(exclusiveShelfFromStatus('Want to Read')).toBe('to-read')
+    expect(exclusiveShelfFromStatus('Reading')).toBe('currently-reading')
+    expect(exclusiveShelfFromStatus('Finished')).toBe('read')
+    if (READING_STATUSES.includes('Paused')) {
+      expect(exclusiveShelfFromStatus('Paused')).toBe('paused')
+    }
+    if (READING_STATUSES.includes('Did Not Finish')) {
+      expect(exclusiveShelfFromStatus('Did Not Finish')).toBe('did-not-finish')
+    }
   })
 })
 

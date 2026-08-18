@@ -590,6 +590,82 @@ export function libraryToJson(libraryOrState) {
   return `${JSON.stringify(buildLibraryExport(libraryOrState), null, 2)}\n`
 }
 
+const CSV_EXPORT_COLUMNS = [
+  'Title',
+  'Author',
+  'ISBN',
+  'Exclusive Shelf',
+  'My Rating',
+  'Number of Pages',
+  'Current Page',
+  'Date Started',
+  'Date Read',
+  'Date Added',
+  'Bookshelves',
+  'My Review',
+  'Shelf',
+  'Color',
+  'Quotes',
+]
+
+/** Goodreads exclusive-shelf slugs. Paused / DNF only when those statuses exist. */
+const EXCLUSIVE_SHELF_BY_STATUS = {
+  'Want to Read': 'to-read',
+  Reading: 'currently-reading',
+  Finished: 'read',
+  ...(READING_STATUSES.includes('Paused') ? { Paused: 'paused' } : {}),
+  ...(READING_STATUSES.includes('Did Not Finish') ? { 'Did Not Finish': 'did-not-finish' } : {}),
+}
+
+export function exclusiveShelfFromStatus(status) {
+  return EXCLUSIVE_SHELF_BY_STATUS[status] || 'to-read'
+}
+
+/** RFC 4180: quote fields that contain comma, quote, or CR/LF. */
+function csvField(value) {
+  const text = value == null ? '' : String(value)
+  if (/[",\r\n]/.test(text)) return `"${text.replaceAll('"', '""')}"`
+  return text
+}
+
+function csvDate(value) {
+  const text = String(value || '').trim()
+  if (!text) return ''
+  if (/^\d{4}-\d{2}-\d{2}/.test(text)) return text.slice(0, 10)
+  return text
+}
+
+export function libraryToCsv(libraryOrState) {
+  const state = Array.isArray(libraryOrState)
+    ? normalizeLibraryState({ books: libraryOrState, shelves: [createDefaultShelf()] })
+    : normalizeLibraryState(libraryOrState)
+
+  const shelfNameById = new Map(state.shelves.map((shelf) => [shelf.id, shelf.name]))
+  const lines = [CSV_EXPORT_COLUMNS.join(',')]
+
+  for (const book of state.books) {
+    lines.push([
+      book.title,
+      book.author,
+      book.isbn,
+      exclusiveShelfFromStatus(book.status),
+      book.rating,
+      book.pageCount,
+      book.currentPage,
+      csvDate(book.startedAt),
+      csvDate(book.finishedAt),
+      csvDate(book.createdAt),
+      book.tags.join(', '),
+      book.notes,
+      shelfNameById.get(book.shelfId) || '',
+      book.color,
+      book.quotes.join(' | '),
+    ].map(csvField).join(','))
+  }
+
+  return `${lines.join('\n')}\n`
+}
+
 function extractImportedState(data) {
   if (Array.isArray(data)) {
     return {
@@ -702,6 +778,34 @@ export function downloadLibraryExport(libraryOrState, filename) {
   const stamp = new Date().toISOString().slice(0, 10)
   const name = filename || `bookshelf-library-${stamp}.json`
   const blob = new Blob([json], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = name
+  anchor.rel = 'noopener'
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 0)
+  markLibraryBackupDone()
+  const count = Array.isArray(libraryOrState)
+    ? libraryOrState.length
+    : Array.isArray(libraryOrState?.books)
+      ? libraryOrState.books.length
+      : 0
+  return { filename: name, count }
+}
+
+/** Trigger a browser download of the library as CSV. */
+export function downloadLibraryCsv(libraryOrState, filename) {
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    throw new Error('Export is only available in the browser.')
+  }
+
+  const csv = libraryToCsv(libraryOrState)
+  const stamp = new Date().toISOString().slice(0, 10)
+  const name = filename || `bookshelf-library-${stamp}.csv`
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
   const url = URL.createObjectURL(blob)
   const anchor = document.createElement('a')
   anchor.href = url

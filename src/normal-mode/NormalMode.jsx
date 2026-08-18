@@ -35,6 +35,7 @@ function NormalMode({
   onDeleteShelf,
   onApplyRoomPreset,
   onExport,
+  onBackupExported,
   onToggle3D,
   onStatus,
   reducedMotion,
@@ -158,6 +159,7 @@ function NormalMode({
                 onReplaceLibrary={onReplaceLibrary}
                 onMergeLibrary={onMergeLibrary}
                 onExport={onExport}
+                onBackupExported={onBackupExported}
                 onStatus={onStatus}
               />
             </TabsContent>
