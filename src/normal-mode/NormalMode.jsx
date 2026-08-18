@@ -179,10 +179,12 @@ function NormalMode({
 
       <BookSheet
         book={sheetMode === 'edit' ? selectedBook : null}
+        library={library}
         shelves={shelves}
         open={sheetOpen}
         onOpenChange={handleSheetOpenChange}
         onAddBook={handleAddBookSubmit}
+        onSelectBook={handleSelectBook}
         onUpdateBook={onUpdateSelectedBook}
         onDeleteBook={onDeleteSelectedBook}
         onStatus={onStatus}

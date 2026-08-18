@@ -794,6 +794,31 @@ function normalizeMatchKey(title, author) {
   return `${clean(title)}|${clean(author)}`
 }
 
+/**
+ * Same-edition match for add-book warnings (ISBN, then id, then title+author).
+ * Returns the first library book that matches, or null.
+ */
+export function findDuplicateBook(library, draft) {
+  const books = Array.isArray(library) ? library : []
+  if (!draft || typeof draft !== 'object' || !books.length) return null
+
+  const draftIsbn = cleanIsbn(draft.isbn)
+  if (draftIsbn) {
+    const match = books.find((book) => cleanIsbn(book.isbn) === draftIsbn)
+    if (match) return match
+  }
+
+  const draftId = typeof draft.id === 'string' ? draft.id.trim() : ''
+  if (draftId) {
+    const match = books.find((book) => book.id === draftId)
+    if (match) return match
+  }
+
+  const draftKey = normalizeMatchKey(draft.title, draft.author)
+  if (!draftKey || draftKey === '|') return null
+  return books.find((book) => normalizeMatchKey(book.title, book.author) === draftKey) || null
+}
+
 function earlierIso(a, b) {
   const ta = Date.parse(a || '')
   const tb = Date.parse(b || '')

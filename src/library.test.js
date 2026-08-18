@@ -20,6 +20,7 @@ import {
   deleteEmptyShelf,
   dismissLibraryBackupReminder,
   ensureLibraryCapacity,
+  findDuplicateBook,
   loadLibrary,
   loadLibraryState,
   loadReadingGoals,
@@ -897,5 +898,45 @@ describe('room presets', () => {
     expect(clamped.adjusted).toBe(true)
     expect(Math.abs(clamped.shelves[0].x)).toBeLessThan(ROOM_LAYOUT_BOUND)
     expect(Math.abs(clamped.shelves[0].z)).toBeLessThan(ROOM_LAYOUT_BOUND)
+  })
+})
+
+describe('findDuplicateBook', () => {
+  const library = [
+    {
+      id: 'dune',
+      title: 'Dune',
+      author: 'Frank Herbert',
+      isbn: '9780441172719',
+    },
+    {
+      id: 'gatsby',
+      title: 'The Great Gatsby',
+      author: 'F. Scott Fitzgerald',
+      isbn: '',
+    },
+  ]
+
+  it('matches by ISBN', () => {
+    expect(findDuplicateBook(library, {
+      title: 'Something Else',
+      author: 'Another Author',
+      isbn: '978-0-441-17271-9',
+    })).toEqual(expect.objectContaining({ id: 'dune' }))
+  })
+
+  it('matches by normalized title and author', () => {
+    expect(findDuplicateBook(library, {
+      title: 'the great gatsby',
+      author: 'F Scott Fitzgerald',
+    })).toEqual(expect.objectContaining({ id: 'gatsby' }))
+  })
+
+  it('returns null when there is no match', () => {
+    expect(findDuplicateBook(library, {
+      title: 'Neuromancer',
+      author: 'William Gibson',
+      isbn: '9780441569595',
+    })).toBeNull()
   })
 })
