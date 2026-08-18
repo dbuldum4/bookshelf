@@ -962,6 +962,33 @@ describe('library export v3', () => {
     expect(loadReadingGoals(2024)).toEqual({ books: 5, pages: 500 })
   })
 
+  it('merge keeps the larger year target and does not replace a local non-zero goal with zeros or a weaker incoming map', () => {
+    expect(saveReadingGoals(2026, { books: 40, pages: 12000 })).toBe(true)
+    expect(saveReadingGoals(2025, { books: 20, pages: 6000 })).toBe(true)
+    expect(saveReadingGoals(2023, { books: 15, pages: 0 })).toBe(true)
+
+    const payload = {
+      format: LIBRARY_EXPORT_FORMAT,
+      version: 3,
+      books: [sampleBook],
+      shelves: [createDefaultShelf()],
+      goals: {
+        2026: { books: 0, pages: 0 },
+        2025: { books: 8, pages: 1000 },
+        2024: { books: 12, pages: 0 },
+        2023: { books: 5, pages: 4000 },
+      },
+    }
+
+    const parsed = parseLibraryImport(JSON.stringify(payload))
+    applyLibraryImportSettings(parsed, 'merge')
+
+    expect(loadReadingGoals(2026)).toEqual({ books: 40, pages: 12000 })
+    expect(loadReadingGoals(2025)).toEqual({ books: 20, pages: 6000 })
+    expect(loadReadingGoals(2024)).toEqual({ books: 12, pages: 0 })
+    expect(loadReadingGoals(2023)).toEqual({ books: 15, pages: 4000 })
+  })
+
   it('always emits goals and preferences keys and marks backup done on download', () => {
     const click = vi.fn()
     const remove = vi.fn()

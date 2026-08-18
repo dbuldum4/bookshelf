@@ -440,8 +440,10 @@ function LibraryPanel({
     if (!pendingImport) return
     const { payload, count, fileName } = pendingImport
     const confirmed = window.confirm(
-      `Replace your entire library (${library.length} book${library.length === 1 ? '' : 's'}) `
-      + `with ${count} imported book${count === 1 ? '' : 's'}?\n\n`
+      `Replace your entire library (${library.length} book${library.length === 1 ? '' : 's'}), `
+      + 'reading goals, and settings '
+      + `with ${count} imported book${count === 1 ? '' : 's'} `
+      + 'and any goals and settings in this file?\n\n'
       + 'This cannot be undone unless you export a backup first.\n\n'
       + 'OK = Replace · Cancel = keep this import choice open.',
     )
@@ -1101,7 +1103,7 @@ function LibraryPanel({
             into your library of {library.length}.
           </p>
           <p style={{ margin: '0 0 10px', color: 'rgba(255,255,255,0.62)', fontSize: 11 }}>
-            Merge matches by id, ISBN, or title + author. Replace discards your current library.
+            Merge matches by id, ISBN, or title + author. Replace discards your current library, goals, and settings.
           </p>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
             <button type="button" onClick={confirmMergeImport} style={actionButton(true)}>

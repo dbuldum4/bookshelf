@@ -636,7 +636,7 @@ export function applyExportPreferences(preferences) {
 /**
  * Apply extras from a parsed import.
  * Replace restores the full goals map and writes preferences.
- * Merge unions goal years only and leaves preferences alone.
+ * Merge unions years (keeping the larger target) and leaves preferences alone.
  */
 export function applyLibraryImportSettings(parsed, mode) {
   if (!parsed || typeof parsed !== 'object') return false
@@ -1765,14 +1765,26 @@ export function replaceReadingGoalsMap(map) {
   }
 }
 
-/** Merge imported years into the stored map without dropping other local years. */
+/**
+ * Merge imported years into the stored map without dropping other local years.
+ * Skip empty incoming years and keep the larger target per metric so a v3
+ * export default cannot clobber a local active goal.
+ */
 export function mergeReadingGoalsMap(map) {
   const incoming = normalizeReadingGoalsMap(map)
-  let ok = true
+  const local = loadReadingGoalsMap()
+  const next = { ...local }
   for (const [year, goals] of Object.entries(incoming)) {
-    if (!saveReadingGoals(Number(year), goals)) ok = false
+    if (!goals.books && !goals.pages) continue
+    const existing = next[year]
+    next[year] = existing
+      ? {
+          books: Math.max(existing.books, goals.books),
+          pages: Math.max(existing.pages, goals.pages),
+        }
+      : goals
   }
-  return ok
+  return replaceReadingGoalsMap(next)
 }
 
 /**
