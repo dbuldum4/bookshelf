@@ -8,6 +8,7 @@ import LibraryPanel from './components/LibraryPanel'
 import NormalMode from './normal-mode/NormalMode'
 import SettingsPanel from './components/SettingsPanel'
 import WebGLFallback from './components/WebGLFallback'
+import { isHelpToggleEvent } from './helpToggle'
 import {
   DEFAULT_GRAPHICS_QUALITY,
   getGraphicsPreset,
@@ -87,14 +88,6 @@ function shouldIgnoreBookNavigation(event) {
   if (isTypingTarget(target)) return true
   if (isModalOrEditorTarget(target)) return true
   return false
-}
-
-/** Shift+/ produces "?" on some layouts; others report key as "/". */
-function isHelpToggleEvent(event) {
-  if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.repeat) {
-    return false
-  }
-  return event.key === '?' || (event.key === '/' && event.shiftKey)
 }
 
 function WebGLContextLossHandler({ onContextLost }) {
@@ -318,12 +311,13 @@ export default function App() {
     if (nextBook) selectBook(nextBook.id)
   }, [library, mode, selectBook])
 
-  // Capture on mount so Help's Escape wins over Settings (registered later).
+  // Capture on mount. stopImmediatePropagation is required because Settings
+  // also listens on window (capture); stopPropagation does not skip those.
   useEffect(() => {
     const onKeyDown = (event) => {
       if (event.key === 'Escape' && helpOpenRef.current) {
         event.preventDefault()
-        event.stopPropagation()
+        event.stopImmediatePropagation()
         setHelpOpen(false)
         return
       }

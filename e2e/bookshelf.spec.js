@@ -160,12 +160,28 @@ test('shows backup reminder and can dismiss it', async ({ page }) => {
 
 test('opens help from ? and ignores it while typing', async ({ page }) => {
   const help = page.getByRole('dialog', { name: 'Help' })
+  const settings = page.getByRole('dialog', { name: 'Settings' })
   const book = page.getByRole('option', { name: /The Great Gatsby, by F[.] Scott Fitzgerald/ })
 
-  await page.keyboard.press('Shift+/')
+  await page.keyboard.press('?')
   await expect(help).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(help).toBeHidden()
+
+  await page.getByRole('button', { name: 'Settings' }).click()
+  await expect(settings).toBeVisible()
+  await page.keyboard.press('?')
+  await expect(help).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(help).toBeHidden()
+  await expect(settings).toBeVisible()
+  await page.keyboard.press('?')
+  await expect(help).toBeVisible()
+  await page.locator('[data-help-backdrop]').click({ position: { x: 4, y: 4 } })
+  await expect(help).toBeHidden()
+  await expect(settings).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(settings).toBeHidden()
 
   await book.click()
   await expect(book).toHaveAttribute('aria-selected', 'true')
@@ -178,7 +194,7 @@ test('opens help from ? and ignores it while typing', async ({ page }) => {
   await expect(book).toHaveAttribute('aria-selected', 'true')
   await expect(page.getByRole('dialog', { name: 'Details for The Great Gatsby' })).toBeVisible()
 
-  await page.keyboard.press('Shift+/')
+  await page.keyboard.press('?')
   await expect(help).toBeVisible()
   await page.locator('[data-help-backdrop]').click({ position: { x: 4, y: 4 } })
   await expect(help).toBeHidden()
@@ -189,6 +205,18 @@ test('opens help from ? and ignores it while typing', async ({ page }) => {
   await page.keyboard.type('?')
   await expect(help).toBeHidden()
   await expect(title).toHaveValue(`${before}?`)
+})
+
+test('opens help in Normal mode', async ({ page }) => {
+  const help = page.getByRole('dialog', { name: 'Help' })
+  await page.getByRole('button', { name: 'Normal mode' }).click()
+  await expect(page.getByRole('button', { name: /3D view/ })).toBeVisible()
+
+  await page.keyboard.press('?')
+  await expect(help).toBeVisible()
+  await expect(help.getByText('Walk', { exact: true })).toHaveCount(0)
+  await page.keyboard.press('Escape')
+  await expect(help).toBeHidden()
 })
 
 test('applies a room preset in Arrange mode', async ({ page }) => {

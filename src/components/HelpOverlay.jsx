@@ -160,7 +160,8 @@ function HelpOverlay({
     const onKeyDown = (event) => {
       if (event.key === 'Escape') {
         event.preventDefault()
-        event.stopPropagation()
+        // Settings also captures Escape on window; stopPropagation would not skip it.
+        event.stopImmediatePropagation()
         onOpenChange(false)
         return
       }
@@ -197,7 +198,7 @@ function HelpOverlay({
   }, [open, onOpenChange])
 
   const layer = open ? (
-    <>
+    <div data-help-layer>
       <div
         data-help-backdrop
         aria-hidden="true"
@@ -265,7 +266,7 @@ function HelpOverlay({
           Press ? to open or close this help.
         </p>
       </div>
-    </>
+    </div>
   ) : null
 
   return (

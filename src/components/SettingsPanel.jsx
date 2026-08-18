@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
+import { HELP_DIALOG_ID } from './HelpOverlay'
 
 const fontFamily =
   '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif'
@@ -122,7 +123,13 @@ function SettingsPanel({
     }
 
     const onPointerDown = (event) => {
-      if (rootRef.current && !rootRef.current.contains(event.target)) {
+      // Help portals to document.body. Treat that layer as stacked, not outside.
+      if (document.getElementById(HELP_DIALOG_ID)) return
+      const target = event.target
+      if (target instanceof Element && target.closest('[data-help-layer], [data-help-backdrop], .help-overlay-root')) {
+        return
+      }
+      if (rootRef.current && !rootRef.current.contains(target)) {
         setOpen(false)
       }
     }
@@ -130,6 +137,7 @@ function SettingsPanel({
     // Capture phase so Escape is handled before App's bubble listener clears selection.
     const onKeyDown = (event) => {
       if (event.key === 'Escape') {
+        if (document.getElementById(HELP_DIALOG_ID)) return
         event.preventDefault()
         event.stopPropagation()
         setOpen(false)
