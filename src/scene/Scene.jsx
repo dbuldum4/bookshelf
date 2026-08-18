@@ -53,6 +53,7 @@ function Scene({
   onMoveShelf,
   onReorderBookToIndex,
   focusPoint = null,
+  walkEnabled = true,
 }) {
   const graphics = graphicsProp || getGraphicsPreset(DEFAULT_GRAPHICS_QUALITY)
   const pixelatedGalaxy = galaxyMode === 'pixelated'
@@ -198,7 +199,12 @@ function Scene({
         </Suspense>
       )}
 
-      <CameraRig mode={mode} reducedMotion={reducedMotion} focusPoint={focusPoint} />
+      <CameraRig
+        mode={mode}
+        reducedMotion={reducedMotion}
+        focusPoint={focusPoint}
+        walkEnabled={walkEnabled}
+      />
       <OrbitControls
         ref={controlsRef}
         makeDefault

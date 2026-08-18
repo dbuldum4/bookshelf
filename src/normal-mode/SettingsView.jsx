@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/button'
+import { demoBooksRemovalPrompt, removeDemoBooks } from '../library'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
@@ -16,6 +17,8 @@ function SettingsView({
   setGraphicsQuality,
   galaxyMode,
   setGalaxyMode,
+  library = [],
+  onRemoveDemoBooks,
   onStatus,
 }) {
   return (
@@ -74,6 +77,25 @@ function SettingsView({
             <option value="realistic">Realistic</option>
             <option value="pixelated">Pixelated</option>
           </Select>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Library</CardTitle>
+          <CardDescription>Remove starter catalog books that still use their original titles.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button
+            variant="outline"
+            onClick={() => {
+              const removed = removeDemoBooks({ books: library }).removed
+              if (removed && !window.confirm(demoBooksRemovalPrompt(removed))) return
+              onRemoveDemoBooks?.()
+            }}
+          >
+            Remove demo books
+          </Button>
         </CardContent>
       </Card>
     </div>

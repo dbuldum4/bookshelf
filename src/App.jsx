@@ -3,6 +3,7 @@ import { Canvas, useThree } from '@react-three/fiber'
 import BookDetails from './components/BookDetails'
 import Controls from './components/Controls'
 import ErrorBoundary from './components/ErrorBoundary'
+import FirstRun from './components/FirstRun'
 import LibraryPanel from './components/LibraryPanel'
 import NormalMode from './normal-mode/NormalMode'
 import SettingsPanel from './components/SettingsPanel'
@@ -25,6 +26,8 @@ import {
   booksOnShelf,
   bookWorldFocusPosition,
   createBook,
+  createEmptyLibraryState,
+  createLibraryState,
   createShelf,
   DEFAULT_SHELF_ID,
   deleteEmptyShelf,
@@ -33,6 +36,9 @@ import {
   ensureLibraryCapacity,
   loadLibraryState,
   mergeLibraryStates,
+  needsLibraryOnboarding,
+  persistOnboardingChoice,
+  removeDemoBooks,
   saveLibraryState,
   shouldRemindLibraryBackup,
   tryReorderBookOnShelf,
@@ -158,6 +164,7 @@ export default function App() {
     initialLibraryRef.current = {
       libraryState: state,
       selectedShelfId: state.shelves[0]?.id || DEFAULT_SHELF_ID,
+      needsOnboarding: needsLibraryOnboarding(),
     }
   }
 
@@ -175,6 +182,9 @@ export default function App() {
     () => storedMotionPreference != null
   )
   const [libraryState, setLibraryState] = useState(() => initialLibraryRef.current.libraryState)
+  const [onboarding, setOnboarding] = useState(() => initialLibraryRef.current.needsOnboarding)
+  const onboardingRef = useRef(onboarding)
+  onboardingRef.current = onboarding
   const [selectedBookId, setSelectedBookId] = useState(null)
   const [selectedShelfId, setSelectedShelfId] = useState(
     () => initialLibraryRef.current.selectedShelfId
@@ -195,10 +205,11 @@ export default function App() {
   )
 
   useEffect(() => {
+    if (onboarding) return
     if (!saveLibraryState(libraryState)) {
       setStatusMessage('Could not save library to this browser. Storage may be full or disabled.')
     }
-  }, [libraryState])
+  }, [libraryState, onboarding])
 
   useEffect(() => {
     setBackupReminder(shouldRemindLibraryBackup({ bookCount: libraryState.books.length }))
@@ -308,6 +319,8 @@ export default function App() {
 
   useEffect(() => {
     const onKeyDown = (event) => {
+      // First-run is mandatory; leave Space/Enter/arrows for the dialog.
+      if (onboardingRef.current) return
       if (event.key === 'Escape') {
         if (event.defaultPrevented) return
         if (document.querySelector('[data-modal="true"], [aria-modal="true"]')) return
@@ -448,10 +461,44 @@ export default function App() {
         ? shelves
         : [{ id: DEFAULT_SHELF_ID, name: 'Library', x: 0, z: 0, yaw: 0, width: 7.6, rows: 4 }]
     const fitted = ensureLibraryCapacity({ books, shelves: nextShelves })
-    setLibraryState({ books: fitted.books, shelves: fitted.shelves })
+    const state = { books: fitted.books, shelves: fitted.shelves }
+    setLibraryState(state)
     setSelectedBookId(null)
     setSelectedShelfId(fitted.shelves[0]?.id || DEFAULT_SHELF_ID)
     if (fitted.message) flashStatus(fitted.message)
+    return state
+  }
+
+  const finishOnboarding = (next) => {
+    if (!onboardingRef.current) return
+    const books = Array.isArray(next?.books) ? next.books : Array.isArray(next) ? next : []
+    const nextShelves = Array.isArray(next?.shelves) && next.shelves.length
+      ? next.shelves
+      : shelves.length
+        ? shelves
+        : [{ id: DEFAULT_SHELF_ID, name: 'Library', x: 0, z: 0, yaw: 0, width: 7.6, rows: 4 }]
+    const fitted = ensureLibraryCapacity({ books, shelves: nextShelves })
+    const state = { books: fitted.books, shelves: fitted.shelves }
+    if (!persistOnboardingChoice(state)) {
+      flashStatus('Could not save library to this browser. Storage may be full or disabled.')
+      return
+    }
+    setLibraryState(state)
+    setSelectedBookId(null)
+    setSelectedShelfId(state.shelves[0]?.id || DEFAULT_SHELF_ID)
+    setOnboarding(false)
+    if (fitted.message) flashStatus(fitted.message)
+  }
+
+  const handleRemoveDemoBooks = () => {
+    const preview = removeDemoBooks(libraryState)
+    if (!preview.removed) {
+      flashStatus('No demo books to remove.')
+      return 0
+    }
+    setLibraryState({ books: preview.books, shelves: preview.shelves })
+    flashStatus(`Removed ${preview.removed} demo book${preview.removed === 1 ? '' : 's'}.`)
+    return preview.removed
   }
 
   const mergeLibrary = (next) => {
@@ -637,6 +684,11 @@ export default function App() {
       data-reduced-motion={reducedMotion ? 'true' : 'false'}
       style={{ width: '100vw', height: '100vh', background: is3D ? '#05010f' : 'hsl(var(--background))' }}
     >
+      <div
+        inert={onboarding ? true : undefined}
+        aria-hidden={onboarding || undefined}
+        style={{ width: '100%', height: '100%' }}
+      >
       {is3D ? (
         webGLAvailable ? (
           <ErrorBoundary fallback={({ reset }) => <SceneErrorFallback reset={reset} />}>
@@ -673,6 +725,7 @@ export default function App() {
                   onMoveShelf={moveShelf}
                   onReorderBookToIndex={handleReorderBookToIndex}
                   focusPoint={focusPoint}
+                  walkEnabled={!onboarding}
                 />
               </Suspense>
             </Canvas>
@@ -700,6 +753,7 @@ export default function App() {
           onApplyRoomPreset={handleApplyRoomPreset}
           onExport={handleBackupExport}
           onToggle3D={() => setViewMode('3d')}
+          onRemoveDemoBooks={handleRemoveDemoBooks}
           onStatus={flashStatus}
           reducedMotion={reducedMotion}
           setReducedMotion={setReducedMotionPreference}
@@ -713,31 +767,6 @@ export default function App() {
       <div className="sr-only" aria-live="polite" aria-atomic="true">
         {selectionAnnouncement}
       </div>
-
-      {statusMessage && (
-        <div
-          role="status"
-          style={{
-            position: 'absolute',
-            left: '50%',
-            bottom: backupReminder ? 148 : 88,
-            transform: 'translateX(-50%)',
-            zIndex: 30,
-            maxWidth: 'min(440px, calc(100vw - 32px))',
-            padding: '10px 14px',
-            borderRadius: 12,
-            color: '#fff',
-            background: 'rgba(20, 18, 35, 0.88)',
-            border: '1px solid rgba(255,255,255,0.14)',
-            fontSize: 13,
-            fontWeight: 600,
-            textAlign: 'center',
-            pointerEvents: 'none',
-          }}
-        >
-          {statusMessage}
-        </div>
-      )}
 
       {backupReminder && (
         <div
@@ -826,9 +855,12 @@ export default function App() {
             setGraphicsQuality={setGraphicsQuality}
             reducedMotion={reducedMotion}
             setReducedMotion={setReducedMotionPreference}
+            library={library}
+            onRemoveDemoBooks={handleRemoveDemoBooks}
           />
         </>
       )}
+
       {is3D && (
         <>
           <LibraryPanel
@@ -853,6 +885,41 @@ export default function App() {
             onReorder={handleReorderBook}
           />
         </>
+      )}
+      </div>
+
+      {statusMessage && (
+        <div
+          role="status"
+          style={{
+            position: 'absolute',
+            left: '50%',
+            bottom: backupReminder ? 148 : 88,
+            transform: 'translateX(-50%)',
+            zIndex: onboarding ? 90 : 30,
+            maxWidth: 'min(440px, calc(100vw - 32px))',
+            padding: '10px 14px',
+            borderRadius: 12,
+            color: '#fff',
+            background: 'rgba(20, 18, 35, 0.88)',
+            border: '1px solid rgba(255,255,255,0.14)',
+            fontSize: 13,
+            fontWeight: 600,
+            textAlign: 'center',
+            pointerEvents: 'none',
+          }}
+        >
+          {statusMessage}
+        </div>
+      )}
+
+      {onboarding && (
+        <FirstRun
+          onBrowseDemo={() => finishOnboarding(createLibraryState())}
+          onStartEmpty={() => finishOnboarding(createEmptyLibraryState())}
+          onImport={finishOnboarding}
+          onStatus={flashStatus}
+        />
       )}
     </div>
   )
