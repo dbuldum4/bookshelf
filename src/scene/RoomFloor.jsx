@@ -3,7 +3,8 @@ import * as THREE from 'three'
 
 // Share the hidden Play collider top / case bottoms so nothing clips through.
 const FLOOR_Y = -0.5
-const FLOOR_RADIUS = 22
+// Walk clamps are ±40 and cases sit inside ROOM_LAYOUT_BOUND (38); cover that disc.
+const FLOOR_RADIUS = 42
 
 function makeFloorGrainTexture() {
   const size = 128
@@ -40,7 +41,8 @@ function makeFloorGrainTexture() {
 
   const tex = new THREE.CanvasTexture(canvas)
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping
-  tex.repeat.set(7, 7)
+  // Keep plank scale after growing the disc to the walkable room.
+  tex.repeat.set(13, 13)
   tex.colorSpace = THREE.SRGBColorSpace
   tex.anisotropy = 4
   return tex
