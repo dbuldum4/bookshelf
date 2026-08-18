@@ -1050,7 +1050,7 @@ function LibraryPanel({
           onClick={openImportPicker}
           disabled={importing}
           style={{ ...actionButton(), flex: 1, opacity: importing ? 0.45 : 1 }}
-          title="Import Bookshelf JSON or Goodreads CSV — merge or replace"
+          title="Import Bookshelf JSON, Goodreads CSV, or StoryGraph CSV — merge or replace"
         >
           {importing ? 'Importing…' : 'Import'}
         </button>

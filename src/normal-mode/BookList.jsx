@@ -46,7 +46,9 @@ function CoverThumb({ coverUrl, color, title }) {
 const statusColors = {
   'Want to Read': 'secondary',
   Reading: 'default',
+  Paused: 'secondary',
   Finished: 'outline',
+  'Did Not Finish': 'outline',
 }
 
 function BookList({

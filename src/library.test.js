@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   addEmptyShelf,
@@ -29,9 +32,12 @@ import {
   mergeLibraryStates,
   mergeNotes,
   normalizeLibraryState,
+  isStoryGraphCsv,
+  mapBookFormat,
   parseLibraryCsv,
   parseLibraryFile,
   parseLibraryImport,
+  parseStoryGraphDatesRead,
   saveReadingGoals,
   insertionIndexFromLocalPoint,
   reorderBookOnShelf,
@@ -48,6 +54,12 @@ import {
   tryReorderBookOnShelf,
   tryReorderBookToIndex,
 } from './library'
+
+const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), 'fixtures')
+
+function readFixture(name) {
+  return readFileSync(join(fixturesDir, name), 'utf8')
+}
 
 function makeStorage(initial = {}) {
   const values = new Map(Object.entries(initial))
@@ -661,6 +673,174 @@ describe('csv and json import', () => {
     expect(result.books[2].isbn).toBe('')
     expect(result.books[3].isbn).toBe('')
   })
+
+  it('still parses a Goodreads fixture file', () => {
+    const result = parseLibraryFile(readFixture('goodreads-export.csv'), 'goodreads-export.csv')
+    expect(result.count).toBe(3)
+    expect(result.books.map((book) => book.status)).toEqual(['Finished', 'Want to Read', 'Reading'])
+    expect(result.books[0]).toEqual(expect.objectContaining({
+      title: 'Dune',
+      author: 'Frank Herbert',
+      finishedAt: '2026-01-15',
+      rating: 5,
+    }))
+  })
+})
+
+describe('StoryGraph CSV import', () => {
+  it('detects StoryGraph headers', () => {
+    expect(isStoryGraphCsv([
+      'title', 'authors', 'read status', 'last date read', 'dates read', 'star rating', 'format', 'tags',
+    ])).toBe(true)
+    expect(isStoryGraphCsv(['title', 'author', 'exclusive shelf', 'my rating', 'date read'])).toBe(false)
+  })
+
+  it('maps paperback and hardcover to physical', () => {
+    expect(mapBookFormat('paperback')).toBe('physical')
+    expect(mapBookFormat('hardcover')).toBe('physical')
+    expect(mapBookFormat('ebook')).toBe('ebook')
+  })
+
+  it('parses multiple Dates Read into reads', () => {
+    expect(parseStoryGraphDatesRead('2024/03/01-2024/03/20, 2026/01/01-2026/01/15')).toEqual([
+      { startedAt: '2024-03-01', finishedAt: '2024-03-20' },
+      { startedAt: '2026-01-01', finishedAt: '2026-01-15' },
+    ])
+  })
+
+  it('treats official open-ended YYYY/MM/DD- as started-only', () => {
+    expect(parseStoryGraphDatesRead('2026/06/01-')).toEqual([
+      { startedAt: '2026-06-01', finishedAt: '' },
+    ])
+    expect(parseStoryGraphDatesRead('2026/01/01-2026/01/15, 2026/06/01-')).toEqual([
+      { startedAt: '2026-01-01', finishedAt: '2026-01-15' },
+      { startedAt: '2026-06-01', finishedAt: '' },
+    ])
+    expect(parseStoryGraphDatesRead('2026/06/01–, 2024/03/01-2024/03/20')).toEqual([
+      { startedAt: '2026-06-01', finishedAt: '' },
+      { startedAt: '2024-03-01', finishedAt: '2024-03-20' },
+    ])
+  })
+
+  it('imports a StoryGraph fixture with statuses, reads, and formats', () => {
+    const result = parseLibraryCsv(readFixture('storygraph-export.csv'))
+    expect(result.count).toBe(5)
+    expect(result.format).toBe('csv')
+
+    const dune = result.books.find((book) => book.title === 'Dune')
+    expect(dune).toEqual(expect.objectContaining({
+      author: 'Frank Herbert',
+      status: 'Finished',
+      rating: 5,
+      format: 'physical',
+      finishedAt: '2026-01-15',
+      startedAt: '2024-03-01',
+      notes: 'Epic.',
+      tags: ['sci-fi', 'classics'],
+      isbn: '9780441172719',
+    }))
+    expect(dune.reads).toEqual([
+      { startedAt: '2024-03-01', finishedAt: '2024-03-20' },
+      { startedAt: '2026-01-01', finishedAt: '2026-01-15' },
+    ])
+
+    expect(result.books.find((book) => book.title === 'Paused Novel')).toEqual(expect.objectContaining({
+      status: 'Paused',
+      format: 'physical',
+    }))
+    expect(result.books.find((book) => book.title === 'Unfinished Tale')).toEqual(expect.objectContaining({
+      status: 'Did Not Finish',
+      format: 'ebook',
+      finishedAt: '2026-03-10',
+    }))
+    expect(result.books.find((book) => book.title === 'Queued Book')).toEqual(expect.objectContaining({
+      status: 'Want to Read',
+      format: 'audiobook',
+    }))
+    expect(result.books.find((book) => book.title === 'Current Read')).toEqual(expect.objectContaining({
+      status: 'Reading',
+      format: 'physical',
+      rating: 4,
+    }))
+  })
+
+  it('prefers Last Date Read over newest-first or open-ended Dates Read', () => {
+    const csv = [
+      'Title,Authors,Read Status,Last Date Read,Dates Read',
+      '"Reread","A. Author","read","2026/01/15","2026/01/01-2026/01/15, 2024/03/01-2024/03/20"',
+      '"Rereading","B. Author","currently-reading","2026/01/15","2026/06/01-, 2026/01/01-2026/01/15"',
+    ].join('\n')
+
+    const result = parseLibraryCsv(csv)
+    expect(result.books[0]).toEqual(expect.objectContaining({
+      title: 'Reread',
+      status: 'Finished',
+      finishedAt: '2026-01-15',
+      startedAt: '2024-03-01',
+      reads: [
+        { startedAt: '2026-01-01', finishedAt: '2026-01-15' },
+        { startedAt: '2024-03-01', finishedAt: '2024-03-20' },
+      ],
+    }))
+    expect(result.books[1]).toEqual(expect.objectContaining({
+      title: 'Rereading',
+      status: 'Reading',
+      finishedAt: '2026-01-15',
+      startedAt: '2026-01-01',
+      reads: [
+        { startedAt: '2026-06-01', finishedAt: '' },
+        { startedAt: '2026-01-01', finishedAt: '2026-01-15' },
+      ],
+    }))
+  })
+
+  it('uses last date as finishedAt when Dates Read is absent', () => {
+    const result = parseLibraryCsv(readFixture('storygraph-last-date-only.csv'))
+    expect(result.books[0]).toEqual(expect.objectContaining({
+      title: 'Only Last Date',
+      status: 'Finished',
+      finishedAt: '2026-02-14',
+      format: 'physical',
+      rating: 4,
+      reads: [],
+    }))
+    expect(result.books[1]).toEqual(expect.objectContaining({
+      title: 'Still Paused',
+      status: 'Paused',
+      format: 'physical',
+      finishedAt: '',
+    }))
+  })
+
+  it('maps did-not-finish and paused from Read Status', () => {
+    const csv = [
+      'Title,Authors,Read Status,Format',
+      '"A","Ann","did-not-finish","paperback"',
+      '"B","Bob","paused","hardcover"',
+      '"C","Cat","Did Not Finish","ebook"',
+      '"D","Dee","PAUSED","audio"',
+    ].join('\n')
+
+    const result = parseLibraryCsv(csv)
+    expect(result.books.map((book) => book.status)).toEqual([
+      'Did Not Finish',
+      'Paused',
+      'Did Not Finish',
+      'Paused',
+    ])
+    expect(result.books.map((book) => book.format)).toEqual([
+      'physical',
+      'physical',
+      'ebook',
+      'audiobook',
+    ])
+  })
+
+  it('routes a StoryGraph fixture through parseLibraryFile', () => {
+    const result = parseLibraryFile(readFixture('storygraph-export.csv'), 'storygraph.csv')
+    expect(result.books).toHaveLength(5)
+    expect(result.books[0].title).toBe('Dune')
+  })
 })
 
 describe('merge import', () => {
@@ -761,6 +941,20 @@ describe('merge import', () => {
     expect(result.updated).toBe(2)
     expect(result.added).toBe(0)
     expect(result.books.find((book) => book.id === 'keep').rating).toBe(4)
+  })
+
+  it('applies incoming Did Not Finish over Reading', () => {
+    const dnfOverReading = mergeBookRecords(
+      { id: '1', title: 'T', author: 'A', status: 'Reading', shelfId: DEFAULT_SHELF_ID },
+      { id: '1', title: 'T', author: 'A', status: 'Did Not Finish', shelfId: DEFAULT_SHELF_ID },
+    )
+    expect(dnfOverReading.status).toBe('Did Not Finish')
+
+    const keepsDnf = mergeBookRecords(
+      { id: '1', title: 'T', author: 'A', status: 'Did Not Finish', shelfId: DEFAULT_SHELF_ID },
+      { id: '1', title: 'T', author: 'A', status: 'Reading', shelfId: DEFAULT_SHELF_ID },
+    )
+    expect(keepsDnf.status).toBe('Did Not Finish')
   })
 
   it('appends differing notes instead of dropping import text', () => {
