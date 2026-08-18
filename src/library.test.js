@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   addEmptyShelf,
+  applyBookFieldUpdates,
   applyRoomPreset,
   applyShelfTransform,
+  bookFieldUpdatesAreNoOp,
   booksFitOnShelf,
   booksOnShelf,
   bookWorldFocusPosition,
@@ -263,6 +265,39 @@ describe('shelf layout and capacity', () => {
     expect(deleteEmptyShelf(shelves, books, shelves[0].id).ok).toBe(false)
     expect(deleteEmptyShelf(shelves, books, shelves[1].id).ok).toBe(true)
     expect(deleteEmptyShelf([createDefaultShelf()], books, DEFAULT_SHELF_ID).ok).toBe(false)
+  })
+
+  it('treats author and tags blurs with the same values as no-ops', () => {
+    const book = {
+      id: 'a',
+      title: 'Dune',
+      author: 'Frank Herbert',
+      tags: ['sf', 'classic'],
+      notes: 'Keep',
+    }
+    expect(bookFieldUpdatesAreNoOp(book, { author: 'Frank Herbert' })).toBe(true)
+    expect(bookFieldUpdatesAreNoOp(book, { tags: ['sf', 'classic'] })).toBe(true)
+    expect(bookFieldUpdatesAreNoOp(book, { author: 'Frank H.' })).toBe(false)
+    expect(bookFieldUpdatesAreNoOp(book, { tags: ['sf'] })).toBe(false)
+    expect(applyBookFieldUpdates(book, { author: 'Frank H.' }).author).toBe('Frank H.')
+  })
+
+  it('marks moving the first book up as an unchanged reorder', () => {
+    const shelf = createDefaultShelf()
+    const books = [
+      { id: 'a', shelfId: shelf.id, title: 'A' },
+      { id: 'b', shelfId: shelf.id, title: 'B' },
+      { id: 'c', shelfId: shelf.id, title: 'C' },
+    ]
+    const up = tryReorderBookOnShelf(books, 'a', -1, shelf)
+    expect(up.ok).toBe(true)
+    expect(up.changed).toBe(false)
+    expect(booksOnShelf(up.books, shelf.id).map((book) => book.id)).toEqual(['a', 'b', 'c'])
+
+    const swap = tryReorderBookOnShelf(books, 'a', 1, shelf)
+    expect(swap.ok).toBe(true)
+    expect(swap.changed).toBe(true)
+    expect(booksOnShelf(swap.books, shelf.id).map((book) => book.id)).toEqual(['b', 'a', 'c'])
   })
 
   it('reorders books within a shelf without disturbing other shelves', () => {

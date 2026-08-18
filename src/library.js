@@ -271,6 +271,54 @@ function normalizeBook(value, index, defaultShelfId = DEFAULT_SHELF_ID) {
   }
 }
 
+function localIsoDate(now = new Date()) {
+  const date = now instanceof Date ? now : new Date(now)
+  const offset = date.getTimezoneOffset() * 60_000
+  return new Date(date.getTime() - offset).toISOString().slice(0, 10)
+}
+
+function valuesEqual(left, right) {
+  if (Object.is(left, right)) return true
+  if (Array.isArray(left) && Array.isArray(right)) {
+    return left.length === right.length && left.every((item, index) => valuesEqual(item, right[index]))
+  }
+  return false
+}
+
+/** Apply editor field patches; stamps start/finish dates and clamps page numbers. */
+export function applyBookFieldUpdates(book, updates, now) {
+  if (!book) return book
+  const patch = updates && typeof updates === 'object' ? updates : {}
+  const next = { ...book, ...patch }
+  if (patch.status === 'Reading' && !book.startedAt) next.startedAt = localIsoDate(now)
+  if (patch.status === 'Finished' && !book.finishedAt) next.finishedAt = localIsoDate(now)
+  if (patch.pageCount !== undefined) {
+    next.pageCount = Math.max(0, Number(patch.pageCount) || 0)
+    const currentPage = Math.max(0, Number(next.currentPage) || 0)
+    next.currentPage = next.pageCount
+      ? Math.min(currentPage, next.pageCount)
+      : Math.min(currentPage, MAX_CURRENT_PAGE_WITHOUT_COUNT)
+  }
+  if (patch.currentPage !== undefined) {
+    const currentPage = Math.max(0, Number(patch.currentPage) || 0)
+    next.currentPage = next.pageCount
+      ? Math.min(currentPage, next.pageCount)
+      : Math.min(currentPage, MAX_CURRENT_PAGE_WITHOUT_COUNT)
+  }
+  return next
+}
+
+/** True when applying `updates` would leave the book unchanged (author/tags blur). */
+export function bookFieldUpdatesAreNoOp(book, updates) {
+  if (!book) return true
+  const next = applyBookFieldUpdates(book, updates)
+  const keys = new Set([...Object.keys(book), ...Object.keys(next)])
+  for (const key of keys) {
+    if (!valuesEqual(book[key], next[key])) return false
+  }
+  return true
+}
+
 export function createLibrary() {
   return BOOKS.map(([id, title, author], index) => normalizeBook({
     id,
@@ -2021,15 +2069,24 @@ export function reorderBookToIndex(library, bookId, targetIndex) {
  * Packing is order-dependent, so a reorder that looks like a simple swap can
  * otherwise create an extra row that the renderer cannot display.
  */
+function shelfMateOrderChanged(before, after, bookId) {
+  const shelfId = before.find((entry) => entry.id === bookId)?.shelfId
+  if (!shelfId) return false
+  return booksOnShelf(before, shelfId).some(
+    (book, index) => booksOnShelf(after, shelfId)[index]?.id !== book.id,
+  )
+}
+
 export function tryReorderBookOnShelf(library, bookId, delta, shelf) {
-  const books = reorderBookOnShelf(library, bookId, delta)
+  const before = Array.isArray(library) ? library : []
+  const books = reorderBookOnShelf(before, bookId, delta)
   if (!shelf || !booksFitOnShelf(booksOnShelf(books, shelf.id), shelf)) {
     return {
       ok: false,
       reason: 'That reorder would exceed the shelf capacity. Resize the case or move a book first.',
     }
   }
-  return { ok: true, books }
+  return { ok: true, books, changed: shelfMateOrderChanged(before, books, bookId) }
 }
 
 /**
@@ -2045,11 +2102,7 @@ export function tryReorderBookToIndex(library, bookId, targetIndex, shelf) {
       reason: 'That reorder would exceed the shelf capacity. Resize the case or move a book first.',
     }
   }
-  const shelfId = before.find((entry) => entry.id === bookId)?.shelfId
-  const changed = shelfId
-    ? booksOnShelf(before, shelfId).some((book, index) => booksOnShelf(books, shelfId)[index]?.id !== book.id)
-    : false
-  return { ok: true, books, changed }
+  return { ok: true, books, changed: shelfMateOrderChanged(before, books, bookId) }
 }
 
 /**
