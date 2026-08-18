@@ -37,6 +37,7 @@ function CameraRig({
   mode,
   reducedMotion = false,
   focusPoint = null,
+  walkEnabled = true,
 }) {
   const { camera, controls, gl } = useThree()
   const keysRef = useRef(new Set())
@@ -47,6 +48,8 @@ function CameraRig({
   const positionRef = useRef(DEFAULT_POSITION.clone())
   const verticalVelocityRef = useRef(0)
   const jumpQueuedRef = useRef(false)
+  const walkEnabledRef = useRef(walkEnabled)
+  walkEnabledRef.current = walkEnabled
   const focusTokenRef = useRef(null)
   const angleRef = useRef(Math.atan2(
     DEFAULT_POSITION.z - ROTATE_TARGET.z,
@@ -63,6 +66,13 @@ function CameraRig({
   useEffect(() => {
     if (mode !== 'play') resetLookLock()
   }, [mode])
+
+  // Drop held WASD/jump so the first-run overlay cannot leave the camera sliding.
+  useEffect(() => {
+    if (walkEnabled) return
+    keysRef.current.clear()
+    jumpQueuedRef.current = false
+  }, [walkEnabled])
 
   // Seed walk pose when entering a walk mode.
   useEffect(() => {
@@ -104,6 +114,8 @@ function CameraRig({
     }
 
     const onKeyDown = (event) => {
+      // Onboarding owns Space/Enter; do not preventDefault walk keys behind the dialog.
+      if (!walkEnabledRef.current) return
       if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return
       if (isTypingTarget(event.target)) return
       const key = event.key.toLowerCase()
@@ -119,6 +131,7 @@ function CameraRig({
       }
     }
     const onKeyUp = (event) => {
+      if (!walkEnabledRef.current) return
       keysRef.current.delete(event.key.toLowerCase())
     }
     const clearInput = () => {
@@ -293,6 +306,11 @@ function CameraRig({
     }
 
     if (!WALK_MODES.has(mode)) return
+
+    if (!walkEnabledRef.current) {
+      keysRef.current.clear()
+      jumpQueuedRef.current = false
+    }
 
     const keys = keysRef.current
     euler.current.set(pitchRef.current, yawRef.current, 0, 'YXZ')

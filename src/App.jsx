@@ -319,6 +319,8 @@ export default function App() {
 
   useEffect(() => {
     const onKeyDown = (event) => {
+      // First-run is mandatory; leave Space/Enter/arrows for the dialog.
+      if (onboardingRef.current) return
       if (event.key === 'Escape') {
         if (event.defaultPrevented) return
         if (document.querySelector('[data-modal="true"], [aria-modal="true"]')) return
@@ -723,6 +725,7 @@ export default function App() {
                   onMoveShelf={moveShelf}
                   onReorderBookToIndex={handleReorderBookToIndex}
                   focusPoint={focusPoint}
+                  walkEnabled={!onboarding}
                 />
               </Suspense>
             </Canvas>
