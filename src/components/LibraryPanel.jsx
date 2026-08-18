@@ -410,7 +410,6 @@ function LibraryPanel({
         return
       }
       const { count, filename } = downloadLibraryCsv({ books: library, shelves })
-      onBackupExported?.()
       showTransferFeedback(`Exported ${count} book${count === 1 ? '' : 's'} to ${filename}.`)
     } catch (error) {
       showTransferFeedback(error instanceof Error ? error.message : 'Could not export your library.', true)

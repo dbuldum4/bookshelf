@@ -21,11 +21,13 @@ import {
   dismissLibraryBackupReminder,
   ensureLibraryCapacity,
   exclusiveShelfFromStatus,
+  downloadLibraryCsv,
   libraryToCsv,
   loadLibrary,
   loadLibraryState,
   loadReadingGoals,
   markLibraryBackupDone,
+  BACKUP_STORAGE_KEY,
   normalizeReadingGoals,
   parseCsvLine,
   mergeBookRecords,
@@ -668,14 +670,23 @@ describe('csv and json import', () => {
 })
 
 describe('csv export', () => {
-  const csvHeader = 'Title,Author,ISBN,Exclusive Shelf,My Rating,Number of Pages,Current Page,Date Started,Date Read,Date Added,Bookshelves,My Review,Shelf,Color,Quotes'
+  const csvHeader = 'Title,Author,ISBN,Exclusive Shelf,My Rating,Number of Pages,Current Page,Date Started,Date Read,Date Added,Bookshelves,My Review,Bookshelf Case,Color,Quotes'
 
-  it('writes the expected CSV header', () => {
+  function csvWithoutBom(csv) {
+    expect(csv.startsWith('\uFEFF')).toBe(true)
+    return csv.slice(1)
+  }
+
+  it('writes the expected CSV header with a UTF-8 BOM', () => {
     const csv = libraryToCsv({
       books: [{ title: 'Dune', author: 'Frank Herbert', shelfId: DEFAULT_SHELF_ID }],
       shelves: [createDefaultShelf()],
     })
-    expect(csv.split('\n')[0]).toBe(csvHeader)
+    expect(csv.startsWith('\uFEFF')).toBe(true)
+    const headerLine = csvWithoutBom(csv).split('\n')[0]
+    expect(headerLine).toBe(csvHeader)
+    expect(headerLine.split(',')).toContain('Bookshelf Case')
+    expect(headerLine.split(',')).not.toContain('Shelf')
   })
 
   it('quotes fields according to RFC 4180', () => {
@@ -700,8 +711,9 @@ describe('csv export', () => {
       shelves: [createDefaultShelf()],
     })
 
-    const headerLine = csv.split('\n')[0]
-    const row = csv.slice(headerLine.length + 1).replace(/\n$/, '')
+    const body = csvWithoutBom(csv)
+    const headerLine = body.split('\n')[0]
+    const row = body.slice(headerLine.length + 1).replace(/\n$/, '')
     expect(headerLine).toBe(csvHeader)
     expect(row).toContain('"Hello, ""World"""')
     expect(row).toContain('"Ann ""Quote"" Author"')
@@ -738,7 +750,7 @@ describe('csv export', () => {
       shelves: [createDefaultShelf(), extra],
     })
 
-    const rows = csv.trimEnd().split('\n').slice(1).map((line) => parseCsvLine(line))
+    const rows = csvWithoutBom(csv).trimEnd().split('\n').slice(1).map((line) => parseCsvLine(line))
     expect(rows.map((cells) => cells[3])).toEqual(['to-read', 'currently-reading', 'read'])
     expect(rows[1][12]).toBe('Fiction')
 
@@ -750,6 +762,45 @@ describe('csv export', () => {
     }
     if (READING_STATUSES.includes('Did Not Finish')) {
       expect(exclusiveShelfFromStatus('Did Not Finish')).toBe('did-not-finish')
+    }
+  })
+
+  it('round-trips status from Exclusive Shelf, not a case named like a Goodreads shelf', () => {
+    const extra = createShelf({ id: 'read-case', name: 'read' }, 1)
+    const csv = libraryToCsv({
+      books: [{ title: 'Queued', author: 'A', status: 'Want to Read', shelfId: extra.id }],
+      shelves: [createDefaultShelf(), extra],
+    })
+    const result = parseLibraryCsv(csv)
+    expect(result.books[0].status).toBe('Want to Read')
+  })
+
+  it('does not mark a restorable backup complete when downloading CSV', () => {
+    const storage = makeStorage()
+    const anchor = { href: '', download: '', rel: '', click: vi.fn(), remove: vi.fn() }
+    vi.stubGlobal('window', {
+      localStorage: storage,
+      setTimeout: (fn) => fn(),
+    })
+    vi.stubGlobal('document', {
+      createElement: vi.fn(() => anchor),
+      body: { appendChild: vi.fn() },
+    })
+    vi.stubGlobal('URL', {
+      createObjectURL: vi.fn(() => 'blob:csv'),
+      revokeObjectURL: vi.fn(),
+    })
+
+    try {
+      const result = downloadLibraryCsv({
+        books: [{ title: 'Dune', author: 'Frank Herbert' }],
+        shelves: [createDefaultShelf()],
+      })
+      expect(result.count).toBe(1)
+      expect(storage.values.has(BACKUP_STORAGE_KEY)).toBe(false)
+      expect(storage.setItem).not.toHaveBeenCalled()
+    } finally {
+      vi.unstubAllGlobals()
     }
   })
 })

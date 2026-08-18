@@ -12,7 +12,6 @@ function ImportExportView({
   onReplaceLibrary,
   onMergeLibrary,
   onExport,
-  onBackupExported,
   onStatus,
 }) {
   const [pendingImport, setPendingImport] = useState(null)
@@ -101,7 +100,6 @@ function ImportExportView({
         return
       }
       const { count, filename } = downloadLibraryCsv({ books: library, shelves })
-      onBackupExported?.()
       onStatus?.(`Exported ${count} book${count === 1 ? '' : 's'} to ${filename}.`)
     } catch (error) {
       onStatus?.(error instanceof Error ? error.message : 'Could not export your library.')

@@ -603,7 +603,8 @@ const CSV_EXPORT_COLUMNS = [
   'Date Added',
   'Bookshelves',
   'My Review',
-  'Shelf',
+  // Not "Shelf" — Goodreads import treats that as Exclusive Shelf status.
+  'Bookshelf Case',
   'Color',
   'Quotes',
 ]
@@ -663,7 +664,8 @@ export function libraryToCsv(libraryOrState) {
     ].map(csvField).join(','))
   }
 
-  return `${lines.join('\n')}\n`
+  // Excel on Windows misreads UTF-8 CSV unless the file starts with a BOM.
+  return `\uFEFF${lines.join('\n')}\n`
 }
 
 function extractImportedState(data) {
@@ -815,7 +817,7 @@ export function downloadLibraryCsv(libraryOrState, filename) {
   anchor.click()
   anchor.remove()
   window.setTimeout(() => URL.revokeObjectURL(url), 0)
-  markLibraryBackupDone()
+  // CSV is a spreadsheet dump, not a restorable snapshot.
   const count = Array.isArray(libraryOrState)
     ? libraryOrState.length
     : Array.isArray(libraryOrState?.books)
