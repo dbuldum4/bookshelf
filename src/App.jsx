@@ -3,10 +3,12 @@ import { Canvas, useThree } from '@react-three/fiber'
 import BookDetails from './components/BookDetails'
 import Controls from './components/Controls'
 import ErrorBoundary from './components/ErrorBoundary'
+import HelpOverlay from './components/HelpOverlay'
 import LibraryPanel from './components/LibraryPanel'
 import NormalMode from './normal-mode/NormalMode'
 import SettingsPanel from './components/SettingsPanel'
 import WebGLFallback from './components/WebGLFallback'
+import { isHelpToggleEvent } from './helpToggle'
 import {
   DEFAULT_GRAPHICS_QUALITY,
   getGraphicsPreset,
@@ -182,6 +184,9 @@ export default function App() {
   const [statusMessage, setStatusMessage] = useState('')
   const [focusPoint, setFocusPoint] = useState(null)
   const [backupReminder, setBackupReminder] = useState(false)
+  const [helpOpen, setHelpOpen] = useState(false)
+  const helpOpenRef = useRef(false)
+  helpOpenRef.current = helpOpen
   const libraryRef = useRef(libraryState.books)
   libraryRef.current = libraryState.books
 
@@ -306,10 +311,32 @@ export default function App() {
     if (nextBook) selectBook(nextBook.id)
   }, [library, mode, selectBook])
 
+  // Capture on mount. stopImmediatePropagation is required because Settings
+  // also listens on window (capture); stopPropagation does not skip those.
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape' && helpOpenRef.current) {
+        event.preventDefault()
+        event.stopImmediatePropagation()
+        setHelpOpen(false)
+        return
+      }
+
+      if (!isHelpToggleEvent(event)) return
+      if (isTypingTarget(event.target)) return
+      event.preventDefault()
+      setHelpOpen((open) => !open)
+    }
+
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => window.removeEventListener('keydown', onKeyDown, true)
+  }, [])
+
   useEffect(() => {
     const onKeyDown = (event) => {
       if (event.key === 'Escape') {
         if (event.defaultPrevented) return
+        if (helpOpen) return
         if (document.querySelector('[data-modal="true"], [aria-modal="true"]')) return
         if (isTypingTarget(event.target)) return
         if (selectedBookId) setSelectedBookId(null)
@@ -337,7 +364,7 @@ export default function App() {
 
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [jumpBookSelection, library.length, mode, moveBookSelection, selectedBookId, viewMode])
+  }, [helpOpen, jumpBookSelection, library.length, mode, moveBookSelection, selectedBookId, viewMode])
 
   const [selectionAnnouncement, setSelectionAnnouncement] = useState('')
   const hasAnnouncedSelection = useRef(false)
@@ -701,6 +728,8 @@ export default function App() {
           onExport={handleBackupExport}
           onToggle3D={() => setViewMode('3d')}
           onStatus={flashStatus}
+          helpOpen={helpOpen}
+          onOpenChangeHelp={setHelpOpen}
           reducedMotion={reducedMotion}
           setReducedMotion={setReducedMotionPreference}
           graphicsQuality={graphicsQuality}
@@ -854,6 +883,14 @@ export default function App() {
           />
         </>
       )}
+      <HelpOverlay
+        open={helpOpen}
+        onOpenChange={setHelpOpen}
+        reducedMotion={reducedMotion}
+        is3D={is3D}
+        besideSettings={is3D && webGLAvailable}
+        showTrigger={is3D}
+      />
     </div>
   )
 }
