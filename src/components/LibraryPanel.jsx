@@ -589,7 +589,7 @@ function LibraryPanel({
         </button>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, padding: '0 16px 8px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(92px, 1fr))', gap: 6, padding: '0 16px 8px' }}>
         {statusStats.map((item) => (
           <div key={item.label} style={{ borderRadius: 10, padding: '8px 7px', background: 'rgba(255,255,255,0.055)' }}>
             <div style={{ color: '#fff', fontSize: 16, fontWeight: 700 }}>{item.count}</div>

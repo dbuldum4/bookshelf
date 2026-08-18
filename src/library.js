@@ -2,7 +2,7 @@ const STORAGE_KEY = 'bookshelf-library-v3'
 const LEGACY_STORAGE_KEY_V2 = 'bookshelf-library-v2'
 const LEGACY_STORAGE_KEY_V1 = 'bookshelf-library-v1'
 
-export const READING_STATUSES = ['Want to Read', 'Reading', 'Finished']
+export const READING_STATUSES = ['Want to Read', 'Reading', 'Paused', 'Finished', 'Did Not Finish']
 
 /** Default named case every library starts with (and migrations land on). */
 export const DEFAULT_SHELF_ID = 'library'
@@ -780,8 +780,10 @@ export function shouldRemindLibraryBackup(options = {}) {
 
 const STATUS_RANK = {
   'Want to Read': 0,
-  Reading: 1,
-  Finished: 2,
+  Paused: 1,
+  'Did Not Finish': 1,
+  Reading: 2,
+  Finished: 3,
 }
 
 function normalizeMatchKey(title, author) {
@@ -1183,6 +1185,10 @@ function matchGoodreadsShelf(value) {
   }
   if (shelf === 'read' || shelf === 'finished') return 'Finished'
   if (shelf === 'to-read' || shelf === 'to read' || shelf === 'want to read') return 'Want to Read'
+  if (shelf === 'paused' || shelf === 'on-hold' || shelf === 'on hold') return 'Paused'
+  if (shelf === 'dnf' || shelf === 'abandoned' || shelf === 'did not finish' || shelf === 'did-not-finish') {
+    return 'Did Not Finish'
+  }
   return null
 }
 
@@ -1539,7 +1545,8 @@ function monthFromDateString(value) {
 
 /**
  * Aggregate reading stats for the library panel dashboard.
- * pagesRead counts finished pageCount plus in-progress currentPage.
+ * pagesRead counts finished pageCount plus Reading/Paused currentPage.
+ * Did Not Finish is excluded from pagesRead.
  */
 export function computeLibraryStats(library, now = new Date()) {
   const books = Array.isArray(library) ? library : []
@@ -1570,7 +1577,7 @@ export function computeLibraryStats(library, now = new Date()) {
         finishedThisYear += 1
         pagesFinishedThisYear += pages
       }
-    } else if (status === 'Reading') {
+    } else if (status === 'Reading' || status === 'Paused') {
       pagesRead += asNumber(book.currentPage)
     }
   }

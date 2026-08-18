@@ -32,6 +32,7 @@ import {
   parseLibraryCsv,
   parseLibraryFile,
   parseLibraryImport,
+  READING_STATUSES,
   saveReadingGoals,
   insertionIndexFromLocalPoint,
   reorderBookOnShelf,
@@ -406,22 +407,52 @@ describe('library sort and stats', () => {
     expect(sortLibrary(books, 'shelf').map((book) => book.title)).toEqual(['Zebra', 'Apple', 'Mango'])
   })
 
+  it('lists Paused and Did Not Finish among reading statuses', () => {
+    expect(READING_STATUSES).toEqual([
+      'Want to Read',
+      'Reading',
+      'Paused',
+      'Finished',
+      'Did Not Finish',
+    ])
+  })
+
   it('computes finished-this-year, pages read, and rating averages', () => {
     const stats = computeLibraryStats([
       { status: 'Finished', pageCount: 300, currentPage: 300, rating: 5, finishedAt: '2026-02-10' },
       { status: 'Finished', pageCount: 200, currentPage: 200, rating: 3, finishedAt: '2025-11-01' },
       { status: 'Reading', pageCount: 400, currentPage: 40, rating: 0, finishedAt: '' },
+      { status: 'Paused', pageCount: 250, currentPage: 80, rating: 0, finishedAt: '' },
+      { status: 'Did Not Finish', pageCount: 400, currentPage: 150, rating: 0, finishedAt: '2026-03-01' },
       { status: 'Want to Read', pageCount: 100, currentPage: 0, rating: 0, finishedAt: '' },
     ], new Date('2026-07-15T12:00:00Z'))
 
     expect(stats.finishedThisYear).toBe(1)
-    expect(stats.pagesRead).toBe(540)
+    expect(stats.pagesRead).toBe(620)
     expect(stats.pagesFinishedThisYear).toBe(300)
     expect(stats.averageRating).toBe(4)
     expect(stats.ratedCount).toBe(2)
     expect(stats.ratingCounts[5]).toBe(1)
     expect(stats.byStatus.Finished).toBe(2)
+    expect(stats.byStatus.Reading).toBe(1)
+    expect(stats.byStatus.Paused).toBe(1)
+    expect(stats.byStatus['Did Not Finish']).toBe(1)
+    expect(stats.byStatus['Want to Read']).toBe(1)
     expect(stats.year).toBe(2026)
+  })
+
+  it('counts Paused currentPage in pagesRead and excludes Did Not Finish', () => {
+    const stats = computeLibraryStats([
+      { status: 'Finished', pageCount: 100, currentPage: 100, rating: 0, finishedAt: '2025-01-01' },
+      { status: 'Reading', pageCount: 200, currentPage: 25, rating: 0, finishedAt: '' },
+      { status: 'Paused', pageCount: 300, currentPage: 90, rating: 0, finishedAt: '' },
+      { status: 'Did Not Finish', pageCount: 500, currentPage: 200, rating: 0, finishedAt: '2026-04-01' },
+    ], new Date('2026-07-15T12:00:00Z'))
+
+    expect(stats.pagesRead).toBe(215)
+    expect(stats.finishedThisYear).toBe(0)
+    expect(stats.byStatus.Paused).toBe(1)
+    expect(stats.byStatus['Did Not Finish']).toBe(1)
   })
 
   it('builds a year-in-review with monthly finishes, ratings, and prior year', () => {
@@ -431,6 +462,8 @@ describe('library sort and stats', () => {
       { id: 'c', title: 'Gamma', author: 'Ann', status: 'Finished', pageCount: 200, rating: 3, finishedAt: '2026-06-02' },
       { id: 'd', title: 'Delta', author: 'Dee', status: 'Finished', pageCount: 90, rating: 5, finishedAt: '2025-12-01' },
       { id: 'e', title: 'Reading', author: 'Eve', status: 'Reading', pageCount: 400, currentPage: 40, rating: 0, finishedAt: '' },
+      { id: 'f', title: 'Paused', author: 'Fay', status: 'Paused', pageCount: 250, currentPage: 80, rating: 4, finishedAt: '2026-04-01' },
+      { id: 'g', title: 'Abandoned', author: 'Gus', status: 'Did Not Finish', pageCount: 400, currentPage: 150, rating: 2, finishedAt: '2026-03-01' },
     ], 2026)
 
     expect(review.year).toBe(2026)
@@ -644,6 +677,30 @@ describe('csv and json import', () => {
 
     const result = parseLibraryCsv(csv)
     expect(result.books[0].status).toBe('Reading')
+  })
+
+  it('maps dnf/abandoned to Did Not Finish and paused/on-hold to Paused', () => {
+    const csv = [
+      'Title,Author,Exclusive Shelf,Bookshelves',
+      '"Gave Up","A","dnf",',
+      '"Quit","B","abandoned",',
+      '"On Pause","C","paused",',
+      '"Waiting","D","on-hold",',
+      '"Tagged DNF","E",,"dnf, fantasy"',
+      '"Tagged pause","F",,"on-hold, mystery"',
+    ].join('\n')
+
+    const result = parseLibraryCsv(csv)
+    expect(result.books.map((book) => book.status)).toEqual([
+      'Did Not Finish',
+      'Did Not Finish',
+      'Paused',
+      'Paused',
+      'Did Not Finish',
+      'Paused',
+    ])
+    expect(result.books[4].tags).toEqual(['fantasy'])
+    expect(result.books[5].tags).toEqual(['mystery'])
   })
 
   it('stores only checksum-valid ISBNs from CSV', () => {
