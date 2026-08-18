@@ -522,7 +522,7 @@ describe('reading goals', () => {
 })
 
 describe('csv and json import', () => {
-  it('imports a Goodreads-style CSV export onto the default shelf', () => {
+  it('imports a Goodreads-style CSV export onto named cases from bookshelves', () => {
     const csv = [
       'Title,Author,ISBN13,My Rating,Exclusive Shelf,Date Read,Date Added,Number of Pages,Bookshelves,My Review',
       '"Dune","Frank Herbert","9780441172719",5,read,2026/01/15,2025/12/01,412,"sci-fi, classics","Epic."',
@@ -543,10 +543,14 @@ describe('csv and json import', () => {
       finishedAt: '2026-01-15',
       notes: 'Epic.',
       tags: ['sci-fi', 'classics'],
-      shelfId: DEFAULT_SHELF_ID,
+      shelfId: 'gr-sci-fi',
     }))
+    expect(result.shelves.find((shelf) => shelf.id === 'gr-sci-fi')?.name).toBe('Sci Fi')
+    expect(result.shelves.some((shelf) => shelf.id === 'gr-classics')).toBe(true)
     expect(result.books[1].status).toBe('Want to Read')
+    expect(result.books[1].shelfId).toBe('gr-tbr')
     expect(result.books[2].status).toBe('Reading')
+    expect(result.books[2].shelfId).toBe(DEFAULT_SHELF_ID)
   })
 
   it('routes csv and json through parseLibraryFile', () => {
@@ -624,6 +628,12 @@ describe('csv and json import', () => {
     expect(result.books[1].tags).toEqual(['favorites'])
     expect(result.books[2].tags).toEqual(['tbr'])
     expect(result.books[3].tags).toEqual(['sci-fi', 'classics'])
+    expect(result.books.map((book) => book.shelfId)).toEqual([
+      'gr-fantasy',
+      'gr-favorites',
+      'gr-tbr',
+      'gr-sci-fi',
+    ])
   })
 
   it('parses page counts with thousands separators', () => {
@@ -644,6 +654,48 @@ describe('csv and json import', () => {
 
     const result = parseLibraryCsv(csv)
     expect(result.books[0].status).toBe('Reading')
+    expect(result.books[0].tags).toEqual(['favorites'])
+    expect(result.books[0].shelfId).toBe('gr-favorites')
+  })
+
+  it('maps extra Goodreads bookshelves onto tags and named cases', () => {
+    const csv = [
+      'Title,Author,Exclusive Shelf,Bookshelves',
+      '"A Wizard of Earthsea","Ursula K. Le Guin","to-read","to-read, fantasy, le-guin"',
+    ].join('\n')
+
+    const result = parseLibraryCsv(csv)
+    const book = result.books[0]
+    expect(book.status).toBe('Want to Read')
+    expect(book.tags).toEqual(['fantasy', 'le-guin'])
+    expect(book.shelfId).toBe('gr-fantasy')
+
+    const fantasy = result.shelves.find((shelf) => shelf.id === 'gr-fantasy')
+    expect(fantasy).toMatchObject({ id: 'gr-fantasy', name: 'Fantasy' })
+    expect(result.shelves.find((shelf) => shelf.id === 'gr-le-guin')).toMatchObject({
+      id: 'gr-le-guin',
+      name: 'Le Guin',
+    })
+    expect(result.shelves[0]).toMatchObject({ id: DEFAULT_SHELF_ID, name: 'Library' })
+    expect(result.shelves.some((shelf) => shelf.id === 'gr-to-read')).toBe(false)
+  })
+
+  it('leaves JSON import shelves unchanged by book tags', () => {
+    const result = parseLibraryImport(JSON.stringify({
+      format: 'bookshelf-library',
+      version: 2,
+      books: [{
+        id: 'earthsea',
+        title: 'A Wizard of Earthsea',
+        author: 'Ursula K. Le Guin',
+        tags: ['fantasy', 'le-guin'],
+      }],
+    }))
+
+    expect(result.books[0].shelfId).toBe(DEFAULT_SHELF_ID)
+    expect(result.books[0].tags).toEqual(['fantasy', 'le-guin'])
+    expect(result.shelves).toHaveLength(1)
+    expect(result.shelves[0].id).toBe(DEFAULT_SHELF_ID)
   })
 
   it('stores only checksum-valid ISBNs from CSV', () => {
