@@ -894,8 +894,8 @@ function LibraryPanel({
                   Finished in {yearReview.year}
                 </div>
                 <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 4, maxHeight: 140, overflow: 'auto' }}>
-                  {yearReview.books.map((book) => (
-                    <li key={`finished-${book.id || book.title}`}>
+                  {yearReview.books.map((book, index) => (
+                    <li key={`finished-${book.id || book.title}-${book.finishedAt}-${index}`}>
                       <button
                         type="button"
                         onClick={() => onSelectBook?.(book.id)}

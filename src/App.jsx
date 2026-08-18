@@ -18,6 +18,8 @@ import {
   saveReducedMotionPreference,
 } from './graphicsQuality'
 import {
+  appendFinishedRead,
+  appendOpenRead,
   applyRoomPreset,
   applyShelfTransform,
   assignBookToShelf,
@@ -26,6 +28,7 @@ import {
   bookWorldFocusPosition,
   createBook,
   createShelf,
+  deriveReadBounds,
   DEFAULT_SHELF_ID,
   deleteEmptyShelf,
   dismissLibraryBackupReminder,
@@ -862,8 +865,22 @@ const MAX_UNKNOWN_PAGE = 100_000
 
 function applyBookFieldUpdates(book, updates) {
   const next = { ...book, ...updates }
-  if (updates.status === 'Reading' && !book.startedAt) next.startedAt = today()
-  if (updates.status === 'Finished' && !book.finishedAt) next.finishedAt = today()
+  if (updates.status === 'Finished') {
+    next.reads = appendFinishedRead({ ...book, ...next }, today())
+  } else if (updates.status === 'Reading') {
+    next.reads = appendOpenRead({ ...book, ...next }, today())
+  }
+  if (Array.isArray(next.reads)) {
+    const meaningful = next.reads.filter((read) => read && (read.startedAt || read.finishedAt))
+    if (meaningful.length) {
+      const bounds = deriveReadBounds(meaningful)
+      next.startedAt = bounds.startedAt
+      next.finishedAt = bounds.finishedAt
+    } else if (updates.reads) {
+      next.startedAt = ''
+      next.finishedAt = ''
+    }
+  }
   if (updates.pageCount !== undefined) {
     next.pageCount = Math.max(0, Number(updates.pageCount) || 0)
     const currentPage = Math.max(0, Number(next.currentPage) || 0)
