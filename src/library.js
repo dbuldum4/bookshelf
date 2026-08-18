@@ -1794,7 +1794,15 @@ function bookSalt(book, fallbackIndex = 0) {
 
 /** Deterministic spine width for capacity and layout. */
 export function bookSpineWidth(book, fallbackIndex = 0) {
-  return 0.54 + bookRandom(bookSalt(book, fallbackIndex), 1) * 0.18
+  const salt = bookSalt(book, fallbackIndex)
+  const jitter = bookRandom(salt, 1)
+  const pages = Number(book?.pageCount)
+  // Unknown page count keeps the original hash range so existing shelves do not reflow.
+  if (!Number.isFinite(pages) || pages <= 0) {
+    return 0.54 + jitter * 0.18
+  }
+  const t = clamp((pages - 100) / 700, 0, 1)
+  return 0.42 + t * 0.5 + (jitter - 0.5) * 0.06
 }
 
 /**
@@ -1845,7 +1853,7 @@ export function buildShelfBooks(library, rowSalt = 0, shelf = null) {
     const salt = bookSalt(book, rowSalt * 100 + index)
     return {
       ...book,
-      width: 0.54 + bookRandom(salt, 1) * 0.18,
+      width: bookSpineWidth(book, rowSalt * 100 + index),
       height: 1.02 + bookRandom(salt, 2) * 0.28,
       depth: 0.52 + bookRandom(salt, 3) * 0.16,
       tilt: bookRandom(salt, 4) > 0.84

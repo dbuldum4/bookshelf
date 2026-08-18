@@ -5,6 +5,7 @@ import {
   applyShelfTransform,
   booksFitOnShelf,
   booksOnShelf,
+  bookSpineWidth,
   bookWorldFocusPosition,
   buildShelfBooks,
   buildShelfCaseLayout,
@@ -25,6 +26,7 @@ import {
   loadReadingGoals,
   markLibraryBackupDone,
   normalizeReadingGoals,
+  packBooksIntoRows,
   mergeBookRecords,
   mergeLibraryStates,
   mergeNotes,
@@ -248,6 +250,49 @@ describe('shelf layout and capacity', () => {
     const layout = buildShelfCaseLayout(state.books, state.shelves[0])
     expect(layout).toHaveLength(state.shelves[0].rows)
     expect(layout.flat()).toHaveLength(state.books.length)
+  })
+
+  it('keeps hash jitter around 0.54-0.72 when page count is 0', () => {
+    for (let index = 0; index < 24; index += 1) {
+      const width = bookSpineWidth({ id: `zero-${index}`, pageCount: 0 }, index)
+      expect(width).toBeGreaterThanOrEqual(0.54)
+      expect(width).toBeLessThanOrEqual(0.72)
+    }
+    expect(bookSpineWidth({ id: 'missing-pages' })).toBeGreaterThanOrEqual(0.54)
+    expect(bookSpineWidth({ id: 'missing-pages' })).toBeLessThanOrEqual(0.72)
+  })
+
+  it('interpolates spine thickness from page count plus small id jitter', () => {
+    const thin = bookSpineWidth({ id: 'anchor', pageCount: 100 })
+    const fat = bookSpineWidth({ id: 'anchor', pageCount: 800 })
+    expect(thin).toBeGreaterThan(0.36)
+    expect(thin).toBeLessThan(0.48)
+    expect(fat).toBeGreaterThan(0.86)
+    expect(fat).toBeLessThan(0.98)
+    expect(fat).toBeGreaterThan(thin)
+
+    const otherThin = bookSpineWidth({ id: 'other-anchor', pageCount: 100 })
+    expect(otherThin).not.toBe(thin)
+    expect(otherThin).toBeGreaterThan(0.36)
+    expect(otherThin).toBeLessThan(0.48)
+  })
+
+  it('a fat book uses more row space than a thin one', () => {
+    const id = 'same-spine'
+    expect(bookSpineWidth({ id, pageCount: 800 })).toBeGreaterThan(bookSpineWidth({ id, pageCount: 100 }))
+
+    const shelf = createDefaultShelf({ width: 5.2, rows: 3 })
+    const make = (pageCount, prefix) => Array.from({ length: 12 }, (_, index) => ({
+      id: `${prefix}-${index}`,
+      title: `${prefix} ${index}`,
+      pageCount,
+      shelfId: shelf.id,
+    }))
+
+    const thinPacked = packBooksIntoRows(make(100, 'thin'), shelf)
+    const fatPacked = packBooksIntoRows(make(800, 'fat'), shelf)
+    expect(fatPacked.length).toBeGreaterThan(thinPacked.length)
+    expect(fatPacked[0].length).toBeLessThan(thinPacked[0].length)
   })
 
   it('blocks shrinking a shelf below its books', () => {
