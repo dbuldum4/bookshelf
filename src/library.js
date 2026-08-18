@@ -7,6 +7,8 @@ export const READING_STATUSES = ['Want to Read', 'Reading', 'Finished']
 /** Default named case every library starts with (and migrations land on). */
 export const DEFAULT_SHELF_ID = 'library'
 export const DEFAULT_SHELF_NAME = 'Library'
+/** Placeholder stored when a book has no author — omit from Open Library queries. */
+export const UNKNOWN_AUTHOR = 'Unknown author'
 
 /** Physical shelf bounds (world units / integer rows). */
 export const SHELF_WIDTH_MIN = 3.2
@@ -275,7 +277,7 @@ function normalizeBook(value, index, defaultShelfId = DEFAULT_SHELF_ID) {
   const isbn = cleanedIsbn && isValidIsbn(cleanedIsbn) ? cleanedIsbn : rawIsbn
 
   const title = asStringField(book.title).trim() || 'Untitled book'
-  const author = asStringField(book.author).trim() || 'Unknown author'
+  const author = asStringField(book.author).trim() || UNKNOWN_AUTHOR
   const rawId = asStringField(book.id, MAX_ID_LENGTH).trim()
   const id = rawId || makeId(title, index)
 
@@ -1307,7 +1309,7 @@ export function parseLibraryCsv(text) {
     const title = cell(row, ['title', 'book title'])
     if (!title) continue
 
-    const author = cell(row, ['author', 'author l f', 'additional authors']) || 'Unknown author'
+    const author = cell(row, ['author', 'author l f', 'additional authors']) || UNKNOWN_AUTHOR
     const isbn = cleanIsbn(cell(row, ['isbn13', 'isbn 13', 'isbn']))
     const pageCount = asNumber(cell(row, ['number of pages', 'pages', 'page count']))
     const rating = Math.min(5, asNumber(cell(row, ['my rating', 'rating', 'stars'])))
@@ -1461,10 +1463,17 @@ function firstValidIsbn(values) {
   return ''
 }
 
+/** Drop empty and placeholder authors so title-only books still match. */
+export function authorForLookup(author) {
+  const value = String(author || '').trim()
+  if (!value || value.toLowerCase() === UNKNOWN_AUTHOR.toLowerCase()) return ''
+  return value
+}
+
 /** Look up ISBN, pages, cover, and year from Open Library search. */
 export async function lookupBookByTitleAuthor(title, author, signal) {
   const qTitle = String(title || '').trim()
-  const qAuthor = String(author || '').trim()
+  const qAuthor = authorForLookup(author)
   if (!qTitle) {
     throw new Error('Add a title before looking up this book.')
   }

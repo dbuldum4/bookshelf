@@ -39,6 +39,7 @@ import {
   ROOM_LAYOUT_BOUND,
   lookupBookByTitleAuthor,
   mergeBlankBookMetadata,
+  UNKNOWN_AUTHOR,
   sanitizeCoverUrl,
   saveLibrary,
   wait,
@@ -268,6 +269,35 @@ describe('blank-only metadata merge', () => {
     expect(merged.coverUrl).toBe('')
     expect(merged.isbn).toBe('9780441172719')
   })
+
+  it('does not clobber newer fields when applied to the latest book', () => {
+    const incoming = {
+      isbn: '9780441172719',
+      coverUrl: incomingCover,
+      pageCount: 412,
+      publishedYear: 1965,
+    }
+    const startedBlank = { isbn: '', coverUrl: '', pageCount: 0, publishedYear: 0 }
+    expect(mergeBlankBookMetadata(startedBlank, incoming)).toEqual({
+      isbn: '9780441172719',
+      pageCount: 412,
+      coverUrl: incomingCover,
+      publishedYear: 1965,
+    })
+
+    const latest = {
+      isbn: '9780141439518',
+      coverUrl: existingCover,
+      pageCount: 88,
+      publishedYear: 1925,
+    }
+    expect(mergeBlankBookMetadata(latest, incoming)).toEqual({
+      isbn: '9780141439518',
+      pageCount: 88,
+      coverUrl: existingCover,
+      publishedYear: 1925,
+    })
+  })
 })
 
 describe('title/author lookup', () => {
@@ -277,7 +307,7 @@ describe('title/author lookup', () => {
   })
 
   it('maps Open Library search results to isbn, pages, cover, and year', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => ({
+    const fetchMock = vi.fn(async () => ({
       ok: true,
       json: async () => ({
         docs: [{
@@ -289,7 +319,8 @@ describe('title/author lookup', () => {
           number_of_pages_median: 412,
         }],
       }),
-    })))
+    }))
+    vi.stubGlobal('fetch', fetchMock)
 
     await expect(lookupBookByTitleAuthor('Dune', 'Frank Herbert')).resolves.toEqual({
       isbn: '9780441172719',
@@ -297,6 +328,34 @@ describe('title/author lookup', () => {
       coverUrl: 'https://covers.openlibrary.org/b/id/12345-M.jpg',
       publishedYear: 1965,
     })
+    expect(new URL(String(fetchMock.mock.calls[0][0])).searchParams.get('author')).toBe('Frank Herbert')
+  })
+
+  it('omits Unknown author from the lookup query', async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        docs: [{
+          title: 'Dune',
+          isbn: ['9780441172719'],
+          cover_i: 1,
+          first_publish_year: 1965,
+          number_of_pages_median: 412,
+        }],
+      }),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await lookupBookByTitleAuthor('Dune', UNKNOWN_AUTHOR)
+    await lookupBookByTitleAuthor('Dune', '  unknown author  ')
+    await lookupBookByTitleAuthor('Dune', '')
+
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    for (const [url] of fetchMock.mock.calls) {
+      const params = new URL(String(url)).searchParams
+      expect(params.get('title')).toBe('Dune')
+      expect(params.has('author')).toBe(false)
+    }
   })
 
   it('throws a safe error on HTTP failure', async () => {

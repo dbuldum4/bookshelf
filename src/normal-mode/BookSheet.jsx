@@ -61,27 +61,30 @@ function BookSheet({
   const detailsAbort = useRef(null)
   const blurTimer = useRef(null)
   const titleInputRef = useRef(null)
+  const bookRef = useRef(book)
+  bookRef.current = book
 
   useEffect(() => {
     if (!open) return
-    if (book) {
+    const current = bookRef.current
+    if (current) {
       setDraft({
-        title: book.title || '',
-        author: book.author || '',
-        isbn: book.isbn || '',
-        pageCount: book.pageCount || '',
-        coverUrl: book.coverUrl || '',
-        publishedYear: book.publishedYear || '',
-        shelfId: book.shelfId || shelves[0]?.id || '',
-        status: book.status || 'Want to Read',
-        rating: book.rating || 0,
-        currentPage: book.currentPage || '',
-        startedAt: book.startedAt || '',
-        finishedAt: book.finishedAt || '',
-        tags: (book.tags || []).join(', '),
-        notes: book.notes || '',
+        title: current.title || '',
+        author: current.author || '',
+        isbn: current.isbn || '',
+        pageCount: current.pageCount || '',
+        coverUrl: current.coverUrl || '',
+        publishedYear: current.publishedYear || '',
+        shelfId: current.shelfId || shelves[0]?.id || '',
+        status: current.status || 'Want to Read',
+        rating: current.rating || 0,
+        currentPage: current.currentPage || '',
+        startedAt: current.startedAt || '',
+        finishedAt: current.finishedAt || '',
+        tags: (current.tags || []).join(', '),
+        notes: current.notes || '',
       })
-      setTagsDraft((book.tags || []).join(', '))
+      setTagsDraft((current.tags || []).join(', '))
     } else {
       setDraft({
         title: '',
@@ -108,7 +111,8 @@ function BookSheet({
     setCoverFailed(false)
     detailsAbort.current?.abort()
     detailsAbort.current = null
-  }, [book, open, shelves])
+    // book.id only: a new book object on every notes/keystroke would abort Find cover.
+  }, [book?.id, open, shelves])
 
   useEffect(() => {
     if (isAdding && open) {
@@ -263,9 +267,9 @@ function BookSheet({
     try {
       const result = await lookupBookByTitleAuthor(draft.title, draft.author, controller.signal)
       if (requestId !== detailsRequestId.current || controller.signal.aborted) return
-      const updates = mergeBlankBookMetadata(draft, result)
-      setDraft((current) => ({ ...current, ...updates }))
-      if (!isAdding && book) onUpdateBook(updates)
+      // Fill blanks on the latest draft so spinner-time edits are not overwritten.
+      setDraft((current) => ({ ...current, ...mergeBlankBookMetadata(current, result) }))
+      if (!isAdding && book) onUpdateBook((current) => mergeBlankBookMetadata(current, result))
       setCoverFailed(false)
     } catch (error) {
       if (error?.name === 'AbortError' || controller.signal.aborted || requestId !== detailsRequestId.current) return

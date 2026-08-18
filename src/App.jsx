@@ -355,6 +355,19 @@ export default function App() {
   }, [selectedBookId])
 
   const updateSelectedBook = (updates) => {
+    if (typeof updates === 'function') {
+      setLibraryState((state) => ({
+        ...state,
+        books: state.books.map((book) => {
+          if (book.id !== selectedBookId) return book
+          const next = updates(book)
+          if (!next) return book
+          return applyBookFieldUpdates(book, next)
+        }),
+      }))
+      return
+    }
+
     if (updates.shelfId && updates.shelfId !== selectedBook?.shelfId) {
       const target = shelves.find((shelf) => shelf.id === updates.shelfId)
       if (!target) return
@@ -401,7 +414,9 @@ export default function App() {
       ...state,
       books: state.books.map((book) => {
         if (book.id !== bookId) return book
-        return applyBookFieldUpdates(book, updates)
+        const next = typeof updates === 'function' ? updates(book) : updates
+        if (!next) return book
+        return applyBookFieldUpdates(book, next)
       }),
     }))
   }

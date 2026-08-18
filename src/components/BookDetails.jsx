@@ -79,7 +79,8 @@ function BookDetails({ book, shelves = [], onUpdate, onDelete, onClose, onReorde
     try {
       const result = await lookupBookByTitleAuthor(book.title, book.author, controller.signal)
       if (requestId !== lookupRequestId.current || controller.signal.aborted) return
-      onUpdate(mergeBlankBookMetadata(book, result))
+      // Merge against the live book so ISBN/cover/year typed during the spinner stay.
+      onUpdate((current) => mergeBlankBookMetadata(current, result))
       setCoverFailed(false)
     } catch (error) {
       if (error?.name === 'AbortError' || controller.signal.aborted || requestId !== lookupRequestId.current) return

@@ -207,6 +207,9 @@ function LibraryPanel({
   const transferTimer = useRef(null)
   const isbnRequestId = useRef(0)
   const fillAbortRef = useRef(null)
+  const fillingCoversRef = useRef(false)
+  const libraryRef = useRef(library)
+  libraryRef.current = library
   const [fillingCovers, setFillingCovers] = useState(false)
 
   const clearTransferFeedback = () => {
@@ -542,7 +545,7 @@ function LibraryPanel({
   }
 
   const fillMissingCovers = async () => {
-    if (fillingCovers || typeof onUpdateBook !== 'function') return
+    if (fillingCoversRef.current || typeof onUpdateBook !== 'function') return
     const missing = library.filter((book) => !book.coverUrl)
     if (!missing.length) {
       showTransferFeedback('Every book already has a cover.')
@@ -551,9 +554,13 @@ function LibraryPanel({
 
     const controller = new AbortController()
     fillAbortRef.current = controller
+    fillingCoversRef.current = true
     setFillingCovers(true)
     let filled = 0
     let stopped = false
+    let failed = 0
+    let attempted = 0
+    let lastError = ''
 
     try {
       for (let index = 0; index < missing.length; index += 1) {
@@ -561,23 +568,31 @@ function LibraryPanel({
           stopped = true
           break
         }
-        const book = missing[index]
+        const queued = missing[index]
         try {
-          const result = await lookupBookByTitleAuthor(book.title, book.author, controller.signal)
+          const latestForQuery = libraryRef.current.find((entry) => entry.id === queued.id) || queued
+          attempted += 1
+          const result = await lookupBookByTitleAuthor(
+            latestForQuery.title,
+            latestForQuery.author,
+            controller.signal,
+          )
           if (controller.signal.aborted) {
             stopped = true
             break
           }
-          const updates = mergeBlankBookMetadata(book, result)
-          if (updates.coverUrl) {
-            onUpdateBook(book.id, updates)
-            filled += 1
-          }
+          const live = libraryRef.current.find((entry) => entry.id === queued.id)
+          if (!live) continue
+          const updates = mergeBlankBookMetadata(live, result)
+          if (!live.coverUrl && updates.coverUrl) filled += 1
+          onUpdateBook(queued.id, (current) => mergeBlankBookMetadata(current, result))
         } catch (error) {
           if (error?.name === 'AbortError' || controller.signal.aborted) {
             stopped = true
             break
           }
+          failed += 1
+          lastError = error instanceof Error ? error.message : 'Could not fill missing covers.'
         }
         if (index < missing.length - 1 && !controller.signal.aborted) {
           try {
@@ -597,8 +612,14 @@ function LibraryPanel({
       }
       stopped = true
     } finally {
+      fillingCoversRef.current = false
       setFillingCovers(false)
       fillAbortRef.current = null
+    }
+
+    if (!stopped && filled === 0 && failed > 0 && failed === attempted) {
+      showTransferFeedback(lastError || 'Could not fill missing covers.', true)
+      return
     }
 
     const countLabel = `${filled} cover${filled === 1 ? '' : 's'}`
@@ -1148,16 +1169,22 @@ function LibraryPanel({
         <div style={{ display: 'flex', gap: 8, padding: '0 16px 10px' }}>
           <button
             type="button"
-            onClick={fillingCovers ? cancelFillCovers : fillMissingCovers}
-            disabled={!fillingCovers && !library.some((book) => !book.coverUrl)}
+            onClick={fillMissingCovers}
+            disabled={fillingCovers || !library.some((book) => !book.coverUrl)}
             style={{
-              ...actionButton(fillingCovers),
+              ...actionButton(),
               flex: 1,
-              opacity: fillingCovers || library.some((book) => !book.coverUrl) ? 1 : 0.45,
+              cursor: fillingCovers || !library.some((book) => !book.coverUrl) ? 'default' : 'pointer',
+              opacity: fillingCovers || !library.some((book) => !book.coverUrl) ? 0.45 : 1,
             }}
           >
-            {fillingCovers ? 'Cancel' : 'Fill missing covers'}
+            {fillingCovers ? 'Filling covers…' : 'Fill missing covers'}
           </button>
+          {fillingCovers ? (
+            <button type="button" onClick={cancelFillCovers} style={actionButton(true)}>
+              Cancel
+            </button>
+          ) : null}
         </div>
       )}
 
