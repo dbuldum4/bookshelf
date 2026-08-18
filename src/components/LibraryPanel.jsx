@@ -177,7 +177,7 @@ function LibraryPanel({
   const [tagFilter, setTagFilter] = useState('All')
   const [ratingFilter, setRatingFilter] = useState('All')
   const [sortBy, setSortBy] = useState('shelf')
-  const [draft, setDraft] = useState({ title: '', author: '', isbn: '', pageCount: '', coverUrl: '', shelfId: '' })
+  const [draft, setDraft] = useState({ title: '', author: '', isbn: '', pageCount: '', coverUrl: '', shelfId: '', publishedYear: '' })
   const [lookupError, setLookupError] = useState('')
   const [lookingUp, setLookingUp] = useState(false)
   const [showSuggestions, setShowSuggestions] = useState(false)
@@ -334,6 +334,7 @@ function LibraryPanel({
       const matchesSearch = !search || [
         book.title,
         book.author,
+        book.series || '',
         ...(book.tags || []),
         ...(book.quotes || []),
         book.notes || '',
@@ -487,6 +488,7 @@ function LibraryPanel({
       title: book.title,
       author: book.author,
       coverUrl: book.coverUrl,
+      publishedYear: book.firstPublishYear || '',
     }))
     setShowSuggestions(false)
     setSuggestionError('')
@@ -552,10 +554,11 @@ function LibraryPanel({
     const added = onAddBook({
       ...draft,
       pageCount: Number(draft.pageCount) || 0,
+      publishedYear: Number(draft.publishedYear) || 0,
       shelfId: draft.shelfId || selectedShelfId || shelves[0]?.id,
     })
     if (added === false) return
-    setDraft({ title: '', author: '', isbn: '', pageCount: '', coverUrl: '', shelfId: '' })
+    setDraft({ title: '', author: '', isbn: '', pageCount: '', coverUrl: '', shelfId: '', publishedYear: '' })
     setLookupError('')
     setAdding(false)
   }

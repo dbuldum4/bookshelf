@@ -3,6 +3,8 @@ const LEGACY_STORAGE_KEY_V2 = 'bookshelf-library-v2'
 const LEGACY_STORAGE_KEY_V1 = 'bookshelf-library-v1'
 
 export const READING_STATUSES = ['Want to Read', 'Reading', 'Finished']
+export const BOOK_FORMATS = ['physical', 'ebook', 'audiobook']
+export const MAX_PUBLISHED_YEAR = 2100
 
 /** Default named case every library starts with (and migrations land on). */
 export const DEFAULT_SHELF_ID = 'library'
@@ -171,6 +173,22 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value))
 }
 
+function normalizeBookFormat(value) {
+  const raw = String(value || '').trim().toLowerCase()
+  if (BOOK_FORMATS.includes(raw)) return raw
+  // Kindle Edition with Audio/Video is an ebook, not an audiobook.
+  if (/\be-?book|\bkindle|\bnook|\bepub|\bmobi|\bkobo/.test(raw)) return 'ebook'
+  if (/\baudiobook|\baudible|\bmp3\s*cd/.test(raw)) return 'audiobook'
+  if (/\bhard|\bpaper|\bmass market|\btrade|\bboard|\blibrary binding|\bphysical/.test(raw)) {
+    return 'physical'
+  }
+  return ''
+}
+
+function normalizePublishedYear(value) {
+  return clamp(asNumber(value), 0, MAX_PUBLISHED_YEAR)
+}
+
 function makeShelfId(name, index = 0) {
   const slug = String(name || 'shelf')
     .toLowerCase()
@@ -268,6 +286,10 @@ function normalizeBook(value, index, defaultShelfId = DEFAULT_SHELF_ID) {
     coverUrl: sanitizeCoverUrl(book.coverUrl),
     createdAt,
     shelfId,
+    series: asStringField(book.series).trim(),
+    seriesNumber: asNumber(book.seriesNumber),
+    publishedYear: normalizePublishedYear(book.publishedYear),
+    format: normalizeBookFormat(book.format),
   }
 }
 
@@ -556,6 +578,10 @@ const BOOK_EXPORT_FIELDS = [
   'coverUrl',
   'createdAt',
   'shelfId',
+  'series',
+  'seriesNumber',
+  'publishedYear',
+  'format',
 ]
 
 const SHELF_EXPORT_FIELDS = ['id', 'name', 'x', 'z', 'yaw', 'width', 'rows']
@@ -860,6 +886,10 @@ export function mergeBookRecords(current, incoming, index = 0) {
     startedAt: earlierIso(left.startedAt, right.startedAt),
     finishedAt: laterIso(left.finishedAt, right.finishedAt),
     createdAt: earlierIso(left.createdAt, right.createdAt) || left.createdAt,
+    series: preferNonEmpty(left.series, right.series),
+    seriesNumber: left.seriesNumber || right.seriesNumber,
+    publishedYear: left.publishedYear || right.publishedYear,
+    format: preferNonEmpty(left.format, right.format),
     shelfId: left.shelfId,
     id: left.id,
   }, index, left.shelfId)
@@ -1289,6 +1319,14 @@ export function parseLibraryCsv(text) {
         .filter(Boolean)
         .filter((tag) => !matchGoodreadsShelf(tag))
       : []
+    const publishedYear = normalizePublishedYear(cell(row, [
+      'year published',
+      'original publication year',
+      'published year',
+      'publication year',
+    ]))
+    const format = normalizeBookFormat(cell(row, ['format']))
+      || normalizeBookFormat(cell(row, ['binding']))
 
     const draft = {
       title,
@@ -1303,6 +1341,8 @@ export function parseLibraryCsv(text) {
       startedAt,
       createdAt: createdAt || undefined,
       currentPage: status === 'Finished' && pageCount ? pageCount : 0,
+      publishedYear,
+      format,
     }
 
     const book = pickBookFields(normalizeBook({ ...draft, shelfId: DEFAULT_SHELF_ID }, index - 1))
@@ -1467,6 +1507,8 @@ export const LIBRARY_SORT_OPTIONS = [
   { value: 'rating', label: 'Highest rated' },
   { value: 'finished', label: 'Recently finished' },
   { value: 'recent', label: 'Recently added' },
+  { value: 'year', label: 'Publication year' },
+  { value: 'series', label: 'Series' },
 ]
 
 function compareText(a, b) {
@@ -1501,6 +1543,27 @@ export function sortLibrary(books, sortBy = 'shelf') {
     case 'recent':
       return list.sort((a, b) => compareDateDesc(a.createdAt, b.createdAt)
         || compareText(a.title, b.title))
+    case 'year':
+      return list.sort((a, b) => {
+        const left = Number(a.publishedYear) || 0
+        const right = Number(b.publishedYear) || 0
+        if (left !== right) {
+          if (!left) return 1
+          if (!right) return -1
+          return right - left
+        }
+        return compareText(a.title, b.title)
+      })
+    case 'series':
+      return list.sort((a, b) => {
+        const left = String(a.series || '').trim()
+        const right = String(b.series || '').trim()
+        if (left && !right) return -1
+        if (!left && right) return 1
+        return compareText(left, right)
+          || (Number(a.seriesNumber) || 0) - (Number(b.seriesNumber) || 0)
+          || compareText(a.title, b.title)
+      })
     case 'shelf':
     default:
       return list

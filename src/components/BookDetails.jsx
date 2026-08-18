@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { READING_STATUSES } from '../library'
+import { BOOK_FORMATS, READING_STATUSES } from '../library'
 
 const fontFamily =
   '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif'
@@ -127,6 +127,65 @@ function BookDetails({ book, shelves = [], onUpdate, onDelete, onClose, onReorde
             style={{ ...fieldStyle, height: 40, padding: '0 11px' }}
           />
         </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 88px', gap: 10 }}>
+          <div>
+            <label htmlFor="book-series" style={labelStyle}>Series</label>
+            <input
+              id="book-series"
+              value={book.series || ''}
+              onChange={(event) => onUpdate({ series: event.target.value })}
+              onBlur={(event) => onUpdate({ series: event.target.value.trim() })}
+              placeholder="Optional"
+              style={{ ...fieldStyle, height: 40, padding: '0 11px' }}
+            />
+          </div>
+          <div>
+            <label htmlFor="book-series-number" style={labelStyle}>No.</label>
+            <input
+              id="book-series-number"
+              min="0"
+              type="number"
+              value={book.seriesNumber || ''}
+              onChange={(event) => onUpdate({ seriesNumber: event.target.value })}
+              placeholder="—"
+              style={{ ...fieldStyle, height: 40, padding: '0 11px' }}
+            />
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <div>
+            <label htmlFor="book-published-year" style={labelStyle}>Year</label>
+            <input
+              id="book-published-year"
+              min="0"
+              max="2100"
+              type="number"
+              value={book.publishedYear || ''}
+              onChange={(event) => onUpdate({ publishedYear: event.target.value })}
+              placeholder="—"
+              style={{ ...fieldStyle, height: 40, padding: '0 11px' }}
+            />
+          </div>
+          <div>
+            <label htmlFor="book-format" style={labelStyle}>Format</label>
+            <select
+              id="book-format"
+              value={book.format || ''}
+              onChange={(event) => onUpdate({ format: event.target.value })}
+              style={{ ...fieldStyle, height: 40, padding: '0 11px' }}
+            >
+              <option value="" style={{ color: '#111' }}>Not set</option>
+              {BOOK_FORMATS.map((format) => (
+                <option key={format} value={format} style={{ color: '#111' }}>
+                  {format === 'ebook' ? 'Ebook' : format.charAt(0).toUpperCase() + format.slice(1)}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
         <div>
           <label htmlFor="book-status" style={labelStyle}>Reading status</label>
           <select id="book-status" value={book.status} onChange={(event) => onUpdate({ status: event.target.value })} style={{ ...fieldStyle, height: 40, padding: '0 11px' }}>

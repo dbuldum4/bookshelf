@@ -7,6 +7,7 @@ import { Select } from '@/components/ui/select'
 import { Sheet, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Textarea } from '@/components/ui/textarea'
 import {
+  BOOK_FORMATS,
   lookupBookByIsbn,
   READING_STATUSES,
   searchAcclaimedBooks,
@@ -43,6 +44,10 @@ function BookSheet({
     finishedAt: '',
     tags: '',
     notes: '',
+    series: '',
+    seriesNumber: '',
+    publishedYear: '',
+    format: '',
   })
   const [tagsDraft, setTagsDraft] = useState('')
   const [lookupError, setLookupError] = useState('')
@@ -74,6 +79,10 @@ function BookSheet({
         finishedAt: book.finishedAt || '',
         tags: (book.tags || []).join(', '),
         notes: book.notes || '',
+        series: book.series || '',
+        seriesNumber: book.seriesNumber || '',
+        publishedYear: book.publishedYear || '',
+        format: book.format || '',
       })
       setTagsDraft((book.tags || []).join(', '))
     } else {
@@ -91,6 +100,10 @@ function BookSheet({
         finishedAt: '',
         tags: '',
         notes: '',
+        series: '',
+        seriesNumber: '',
+        publishedYear: '',
+        format: '',
       })
       setTagsDraft('')
     }
@@ -111,7 +124,7 @@ function BookSheet({
     setDraft((current) => ({ ...current, [field]: value }))
     if (!isAdding && book) {
       if (field === 'tags') return
-      if (field === 'currentPage' || field === 'pageCount') {
+      if (field === 'currentPage' || field === 'pageCount' || field === 'seriesNumber' || field === 'publishedYear') {
         onUpdateBook({ [field]: value })
       } else if (field === 'rating') {
         onUpdateBook({ rating: Number(value) })
@@ -194,6 +207,7 @@ function BookSheet({
       title: suggestion.title,
       author: suggestion.author,
       coverUrl: suggestion.coverUrl,
+      publishedYear: suggestion.firstPublishYear || '',
     }))
     setShowSuggestions(false)
     setSuggestions([])
@@ -254,6 +268,8 @@ function BookSheet({
       pageCount: Number(draft.pageCount) || 0,
       currentPage: Number(draft.currentPage) || 0,
       rating: Number(draft.rating) || 0,
+      seriesNumber: Number(draft.seriesNumber) || 0,
+      publishedYear: Number(draft.publishedYear) || 0,
       tags,
       shelfId: draft.shelfId || shelves[0]?.id,
     })
@@ -357,6 +373,56 @@ function BookSheet({
             onBlur={(e) => handleChange('author', e.target.value.trim())}
             placeholder="Author"
           />
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label htmlFor="book-series">Series</Label>
+            <Input
+              id="book-series"
+              value={draft.series}
+              onChange={(e) => handleChange('series', e.target.value)}
+              onBlur={(e) => handleChange('series', e.target.value.trim())}
+              placeholder="Optional"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="book-series-number">Series number</Label>
+            <Input
+              id="book-series-number"
+              type="number"
+              min={0}
+              value={draft.seriesNumber}
+              onChange={(e) => handleChange('seriesNumber', e.target.value)}
+              placeholder="—"
+            />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label htmlFor="book-published-year">Year published</Label>
+            <Input
+              id="book-published-year"
+              type="number"
+              min={0}
+              max={2100}
+              value={draft.publishedYear}
+              onChange={(e) => handleChange('publishedYear', e.target.value)}
+              placeholder="—"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="book-format">Format</Label>
+            <Select id="book-format" value={draft.format} onChange={(e) => handleChange('format', e.target.value)}>
+              <option value="">Not set</option>
+              {BOOK_FORMATS.map((format) => (
+                <option key={format} value={format}>
+                  {format === 'ebook' ? 'Ebook' : format.charAt(0).toUpperCase() + format.slice(1)}
+                </option>
+              ))}
+            </Select>
+          </div>
         </div>
 
         <div className="grid grid-cols-2 gap-4">
