@@ -95,6 +95,7 @@ function Scene({
       onShelfDragChange={handleShelfDragChange}
       onReorderBookToIndex={onReorderBookToIndex}
       onBookDragChange={handleBookDragChange}
+      reducedMotion={reducedMotion}
     />
   )
 
@@ -171,6 +172,7 @@ function Scene({
               mode={mode}
               library={library}
               shelves={shelves}
+              reducedMotion={reducedMotion}
             />
           </Physics>
         </Suspense>
