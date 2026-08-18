@@ -17,6 +17,7 @@ import {
   saveGraphicsQuality,
   saveReducedMotionPreference,
 } from './graphicsQuality'
+import { createHistory } from './history'
 import {
   applyRoomPreset,
   applyShelfTransform,
@@ -44,6 +45,10 @@ import { loadViewMode, saveViewMode } from './viewMode'
 
 const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)'
 const BOOK_NAV_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'Home', 'End'])
+const TEXT_EDIT_DEBOUNCE_MS = 600
+const TEXT_BOOK_FIELDS = new Set([
+  'title', 'author', 'notes', 'isbn', 'quotes', 'tags', 'currentPage', 'pageCount',
+])
 
 function prefersReducedMotion() {
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false
@@ -182,8 +187,15 @@ export default function App() {
   const [statusMessage, setStatusMessage] = useState('')
   const [focusPoint, setFocusPoint] = useState(null)
   const [backupReminder, setBackupReminder] = useState(false)
+  const [, setHistoryVersion] = useState(0)
   const libraryRef = useRef(libraryState.books)
   libraryRef.current = libraryState.books
+  const libraryStateRef = useRef(libraryState)
+  libraryStateRef.current = libraryState
+  const historyRef = useRef(null)
+  if (historyRef.current === null) historyRef.current = createHistory()
+  const textCoalesceGenRef = useRef(0)
+  const textDebounceTimerRef = useRef(0)
 
   const library = libraryState.books
   const shelves = libraryState.shelves
@@ -270,6 +282,64 @@ export default function App() {
     setStatusMessage(message)
   }, [])
 
+  const bumpHistory = useCallback(() => {
+    setHistoryVersion((version) => version + 1)
+  }, [])
+
+  const captureLibrarySnapshot = useCallback((coalesceKey) => {
+    const snapshot = {
+      books: libraryStateRef.current.books,
+      shelves: libraryStateRef.current.shelves,
+    }
+    if (coalesceKey != null) historyRef.current.coalesce(snapshot, coalesceKey)
+    else historyRef.current.push(snapshot)
+    bumpHistory()
+  }, [bumpHistory])
+
+  const captureTextEditSnapshot = useCallback(() => {
+    captureLibrarySnapshot(`text:${textCoalesceGenRef.current}`)
+    window.clearTimeout(textDebounceTimerRef.current)
+    // Close the text-edit undo group after idle so the next burst is a new step.
+    textDebounceTimerRef.current = window.setTimeout(() => {
+      textCoalesceGenRef.current += 1
+    }, TEXT_EDIT_DEBOUNCE_MS)
+  }, [captureLibrarySnapshot])
+
+  useEffect(() => () => {
+    window.clearTimeout(textDebounceTimerRef.current)
+  }, [])
+
+  const applyHistorySnapshot = useCallback((snapshot) => {
+    setLibraryState({ books: snapshot.books, shelves: snapshot.shelves })
+    textCoalesceGenRef.current += 1
+    bumpHistory()
+  }, [bumpHistory])
+
+  const handleUndo = useCallback(() => {
+    const current = {
+      books: libraryStateRef.current.books,
+      shelves: libraryStateRef.current.shelves,
+    }
+    const next = historyRef.current.undo(current)
+    if (!next) return
+    applyHistorySnapshot(next)
+    flashStatus('Undid')
+  }, [applyHistorySnapshot, flashStatus])
+
+  const handleRedo = useCallback(() => {
+    const current = {
+      books: libraryStateRef.current.books,
+      shelves: libraryStateRef.current.shelves,
+    }
+    const next = historyRef.current.redo(current)
+    if (!next) return
+    applyHistorySnapshot(next)
+    flashStatus('Redid')
+  }, [applyHistorySnapshot, flashStatus])
+
+  const canUndo = historyRef.current.canUndo()
+  const canRedo = historyRef.current.canRedo()
+
   const selectBook = useCallback((id) => {
     if (id == null) {
       setSelectedBookId(null)
@@ -316,6 +386,18 @@ export default function App() {
         return
       }
 
+      if (!event.defaultPrevented && !event.altKey && (event.metaKey || event.ctrlKey) && !isTypingTarget(event.target)) {
+        const key = event.key.toLowerCase()
+        const redo = (key === 'z' && event.shiftKey) || (key === 'y' && event.ctrlKey)
+        const undo = key === 'z' && !event.shiftKey
+        if (undo || redo) {
+          event.preventDefault()
+          if (redo) handleRedo()
+          else handleUndo()
+          return
+        }
+      }
+
       if (!BOOK_NAV_KEYS.has(event.key)) return
       if (viewMode !== '3d' || mode === 'play' || mode === 'arrange' || !library.length) return
       if (shouldIgnoreBookNavigation(event)) return
@@ -337,7 +419,7 @@ export default function App() {
 
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [jumpBookSelection, library.length, mode, moveBookSelection, selectedBookId, viewMode])
+  }, [handleRedo, handleUndo, jumpBookSelection, library.length, mode, moveBookSelection, selectedBookId, viewMode])
 
   const [selectionAnnouncement, setSelectionAnnouncement] = useState('')
   const hasAnnouncedSelection = useRef(false)
@@ -363,6 +445,7 @@ export default function App() {
         flashStatus(capacity.reason)
         return
       }
+      captureLibrarySnapshot()
       const { shelfId: _shelfId, ...rest } = updates
       let assignFailed = null
       setLibraryState((state) => {
@@ -385,6 +468,11 @@ export default function App() {
       if (assignFailed) flashStatus(assignFailed)
       return
     }
+
+    const fields = Object.keys(updates)
+    const isTextEdit = fields.length > 0 && fields.every((field) => TEXT_BOOK_FIELDS.has(field))
+    if (isTextEdit) captureTextEditSnapshot()
+    else captureLibrarySnapshot()
 
     setLibraryState((state) => ({
       ...state,
@@ -412,6 +500,7 @@ export default function App() {
       return false
     }
 
+    captureLibrarySnapshot()
     setLibraryState((state) => {
       const liveShelf = state.shelves.find((entry) => entry.id === provisional.shelfId)
         || state.shelves[0]
@@ -433,6 +522,7 @@ export default function App() {
 
   const deleteSelectedBook = () => {
     if (!selectedBookId) return
+    captureLibrarySnapshot()
     setLibraryState((state) => ({
       ...state,
       books: state.books.filter((book) => book.id !== selectedBookId),
@@ -448,6 +538,7 @@ export default function App() {
         ? shelves
         : [{ id: DEFAULT_SHELF_ID, name: 'Library', x: 0, z: 0, yaw: 0, width: 7.6, rows: 4 }]
     const fitted = ensureLibraryCapacity({ books, shelves: nextShelves })
+    captureLibrarySnapshot()
     setLibraryState({ books: fitted.books, shelves: fitted.shelves })
     setSelectedBookId(null)
     setSelectedShelfId(fitted.shelves[0]?.id || DEFAULT_SHELF_ID)
@@ -460,6 +551,7 @@ export default function App() {
       shelves: Array.isArray(next?.shelves) && next.shelves.length ? next.shelves : shelves,
     }
     const result = mergeLibraryStates(libraryState, incoming)
+    captureLibrarySnapshot()
     setLibraryState({ books: result.books, shelves: result.shelves })
     setSelectedBookId(null)
     setSelectedShelfId((current) => (
@@ -477,6 +569,7 @@ export default function App() {
       flashStatus(result.reason)
       return
     }
+    captureLibrarySnapshot()
     setLibraryState({ books: result.books, shelves: result.shelves })
     setMode('arrange')
     flashStatus(
@@ -511,6 +604,9 @@ export default function App() {
 
   const renameShelf = (shelfId, name) => {
     const trimmed = name.trim()
+    const current = libraryStateRef.current.shelves.find((shelf) => shelf.id === shelfId)
+    if (!current || (trimmed || current.name) === current.name) return
+    captureLibrarySnapshot()
     setLibraryState((state) => ({
       ...state,
       shelves: state.shelves.map((shelf) =>
@@ -527,6 +623,7 @@ export default function App() {
       flashStatus(preview.reason)
       return
     }
+    captureLibrarySnapshot(`transform:${shelfId}`)
     setLibraryState((state) => {
       const live = state.shelves.find((entry) => entry.id === shelfId)
       if (!live) return state
@@ -540,13 +637,14 @@ export default function App() {
   }
 
   const moveShelf = useCallback((shelfId, { x, z }) => {
+    captureLibrarySnapshot(`move:${shelfId}`)
     setLibraryState((state) => ({
       ...state,
       shelves: state.shelves.map((shelf) =>
         shelf.id === shelfId ? { ...shelf, x, z } : shelf
       ),
     }))
-  }, [])
+  }, [captureLibrarySnapshot])
 
   const handleAddShelf = () => {
     const last = shelves[shelves.length - 1]
@@ -556,6 +654,7 @@ export default function App() {
       z: last ? last.z : 0,
       yaw: 0,
     }, shelves.length)
+    captureLibrarySnapshot()
     setLibraryState((state) => {
       if (state.shelves.some((shelf) => shelf.id === created.id)) return state
       return { ...state, shelves: [...state.shelves, created] }
@@ -571,6 +670,7 @@ export default function App() {
       flashStatus(preview.reason)
       return
     }
+    captureLibrarySnapshot()
     setLibraryState((state) => {
       const result = deleteEmptyShelf(state.shelves, state.books, shelfId)
       if (!result.ok) return state
@@ -589,6 +689,7 @@ export default function App() {
       return
     }
 
+    captureLibrarySnapshot()
     setLibraryState((state) => {
       const liveBook = state.books.find((entry) => entry.id === bookId)
       const liveShelf = state.shelves.find((entry) => entry.id === liveBook?.shelfId)
@@ -600,21 +701,27 @@ export default function App() {
 
   /** 3D spine drag: drop at absolute shelf index; order auto-saves via libraryState effect. */
   const handleReorderBookToIndex = useCallback((bookId, targetIndex) => {
-    let failure = null
-    setLibraryState((state) => {
-      const liveBook = state.books.find((entry) => entry.id === bookId)
-      if (!liveBook) return state
-      const liveShelf = state.shelves.find((entry) => entry.id === liveBook.shelfId)
-      const result = tryReorderBookToIndex(state.books, bookId, targetIndex, liveShelf)
-      if (!result.ok) {
-        failure = result.reason
-        return state
-      }
-      if (!result.changed) return state
-      return { ...state, books: result.books }
+    const state = libraryStateRef.current
+    const liveBook = state.books.find((entry) => entry.id === bookId)
+    if (!liveBook) return
+    const liveShelf = state.shelves.find((entry) => entry.id === liveBook.shelfId)
+    const preview = tryReorderBookToIndex(state.books, bookId, targetIndex, liveShelf)
+    if (!preview.ok) {
+      flashStatus(preview.reason)
+      return
+    }
+    if (!preview.changed) return
+
+    captureLibrarySnapshot()
+    setLibraryState((current) => {
+      const book = current.books.find((entry) => entry.id === bookId)
+      if (!book) return current
+      const shelf = current.shelves.find((entry) => entry.id === book.shelfId)
+      const result = tryReorderBookToIndex(current.books, bookId, targetIndex, shelf)
+      if (!result.ok || !result.changed) return current
+      return { ...current, books: result.books }
     })
-    if (failure) flashStatus(failure)
-  }, [flashStatus])
+  }, [captureLibrarySnapshot, flashStatus])
 
   const retryWebGL = () => {
     setWebGLAvailable(isWebGLAvailable())
@@ -699,6 +806,10 @@ export default function App() {
           onDeleteShelf={handleDeleteShelf}
           onApplyRoomPreset={handleApplyRoomPreset}
           onExport={handleBackupExport}
+          onUndo={handleUndo}
+          onRedo={handleRedo}
+          canUndo={canUndo}
+          canRedo={canRedo}
           onToggle3D={() => setViewMode('3d')}
           onStatus={flashStatus}
           reducedMotion={reducedMotion}
@@ -817,6 +928,10 @@ export default function App() {
             onDeleteShelf={handleDeleteShelf}
             onApplyRoomPreset={handleApplyRoomPreset}
             books={library}
+            onUndo={handleUndo}
+            onRedo={handleRedo}
+            canUndo={canUndo}
+            canRedo={canRedo}
             onNormalMode={() => setViewMode('normal')}
           />
           <SettingsPanel

@@ -72,6 +72,10 @@ function Controls({
   onDeleteShelf,
   onApplyRoomPreset,
   books = [],
+  onUndo,
+  onRedo,
+  canUndo = false,
+  canRedo = false,
   onNormalMode,
 }) {
   const [controlsOpen, setControlsOpen] = useState(false)
@@ -88,7 +92,37 @@ function Controls({
   return (
     <>
       <div className="scene-controls-bar">
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 10, pointerEvents: 'auto' }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 8, marginBottom: 10, pointerEvents: 'auto' }}>
+          <button
+            type="button"
+            onClick={onUndo}
+            disabled={!canUndo}
+            aria-label="Undo"
+            title="Undo (Ctrl/Cmd+Z)"
+            style={{
+              ...controlButtonStyle(false, reducedMotion),
+              background: 'rgba(255,255,255,0.1)',
+              opacity: canUndo ? 1 : 0.35,
+              cursor: canUndo ? 'pointer' : 'default',
+            }}
+          >
+            Undo
+          </button>
+          <button
+            type="button"
+            onClick={onRedo}
+            disabled={!canRedo}
+            aria-label="Redo"
+            title="Redo (Ctrl/Cmd+Shift+Z)"
+            style={{
+              ...controlButtonStyle(false, reducedMotion),
+              background: 'rgba(255,255,255,0.1)',
+              opacity: canRedo ? 1 : 0.35,
+              cursor: canRedo ? 'pointer' : 'default',
+            }}
+          >
+            Redo
+          </button>
           <button
             type="button"
             onClick={onNormalMode}
