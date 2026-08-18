@@ -9,6 +9,7 @@ import { Textarea } from '@/components/ui/textarea'
 import {
   lookupBookByIsbn,
   READING_STATUSES,
+  resolveBookSubmit,
   searchAcclaimedBooks,
 } from '../library'
 
@@ -20,10 +21,12 @@ function today() {
 
 function BookSheet({
   book,
+  library = [],
   shelves,
   open,
   onOpenChange,
   onAddBook,
+  onSelectBook,
   onUpdateBook,
   onDeleteBook,
   onStatus,
@@ -46,6 +49,7 @@ function BookSheet({
   })
   const [tagsDraft, setTagsDraft] = useState('')
   const [lookupError, setLookupError] = useState('')
+  const [duplicate, setDuplicate] = useState(null)
   const [lookingUp, setLookingUp] = useState(false)
   const [suggestions, setSuggestions] = useState([])
   const [showSuggestions, setShowSuggestions] = useState(false)
@@ -95,6 +99,7 @@ function BookSheet({
       setTagsDraft('')
     }
     setLookupError('')
+    setDuplicate(null)
     setSuggestions([])
     setShowSuggestions(false)
     setSuggestionError('')
@@ -109,6 +114,7 @@ function BookSheet({
 
   const handleChange = (field, value) => {
     setDraft((current) => ({ ...current, [field]: value }))
+    if (field === 'title' || field === 'author' || field === 'isbn') setDuplicate(null)
     if (!isAdding && book) {
       if (field === 'tags') return
       if (field === 'currentPage' || field === 'pageCount') {
@@ -195,6 +201,7 @@ function BookSheet({
       author: suggestion.author,
       coverUrl: suggestion.coverUrl,
     }))
+    setDuplicate(null)
     setShowSuggestions(false)
     setSuggestions([])
   }
@@ -228,6 +235,7 @@ function BookSheet({
         ...result,
         shelfId: current.shelfId || shelves[0]?.id,
       }))
+      setDuplicate(null)
       if (!isAdding && book) {
         onUpdateBook({ ...result })
       }
@@ -239,28 +247,65 @@ function BookSheet({
     }
   }
 
-  const handleSubmit = (event) => {
-    event.preventDefault()
-    if (!draft.title.trim()) {
-      setLookupError('Add a title before saving the book.')
-      return
-    }
+  const addPayload = () => {
     const tags = tagsDraft
       .split(',')
       .map((tag) => tag.trim())
       .filter(Boolean)
-    const added = onAddBook({
+    return {
       ...draft,
       pageCount: Number(draft.pageCount) || 0,
       currentPage: Number(draft.currentPage) || 0,
       rating: Number(draft.rating) || 0,
       tags,
       shelfId: draft.shelfId || shelves[0]?.id,
-    })
+    }
+  }
+
+  const finishAdd = (payload) => {
+    const added = onAddBook(payload)
     if (added) {
+      setDuplicate(null)
       onOpenChange(false)
       onStatus?.('Book added.')
     }
+    return added
+  }
+
+  const handleSubmit = (event) => {
+    event.preventDefault()
+    if (!draft.title.trim()) {
+      setLookupError('Add a title before saving the book.')
+      return
+    }
+    const payload = addPayload()
+    const decision = resolveBookSubmit(library, payload, { editing: Boolean(book) })
+    if (decision.action === 'update') {
+      onUpdateBook(payload)
+      setLookupError('')
+      setDuplicate(null)
+      return
+    }
+    if (decision.action === 'warn') {
+      setDuplicate(decision.existing)
+      setLookupError('')
+      return
+    }
+    finishAdd(payload)
+  }
+
+  const addAnyway = () => {
+    if (!draft.title.trim()) {
+      setLookupError('Add a title before saving the book.')
+      return
+    }
+    finishAdd(addPayload())
+  }
+
+  const openExisting = () => {
+    if (!duplicate) return
+    onSelectBook?.(duplicate.id)
+    setDuplicate(null)
   }
 
   const confirmDelete = () => {
@@ -526,6 +571,27 @@ function BookSheet({
                 ))}
               </div>
             )}
+          </div>
+        )}
+
+        {isAdding && duplicate && (
+          <div
+            role="alert"
+            className="space-y-3 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm"
+          >
+            <p>
+              This book is already in your library
+              {duplicate.title ? `: “${duplicate.title}”` : ''}
+              {duplicate.author ? ` by ${duplicate.author}` : ''}.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" size="sm" onClick={openExisting}>
+                Open existing
+              </Button>
+              <Button type="button" size="sm" variant="outline" onClick={addAnyway}>
+                Add anyway
+              </Button>
+            </div>
           </div>
         )}
 

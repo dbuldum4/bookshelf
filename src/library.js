@@ -105,6 +105,8 @@ const MAX_QUOTES = 50
 const MAX_BOOKS_IMPORT = 10000
 const MAX_CURRENT_PAGE_WITHOUT_COUNT = 100000
 const MAX_IMPORT_TEXT_LENGTH = 5_000_000
+const FALLBACK_BOOK_TITLE = 'Untitled book'
+const FALLBACK_BOOK_AUTHOR = 'Unknown author'
 /** Soft room AABB so presets stay inside CameraRig walk bounds (±40). */
 export const ROOM_LAYOUT_BOUND = 38
 
@@ -242,8 +244,8 @@ function normalizeBook(value, index, defaultShelfId = DEFAULT_SHELF_ID) {
   const cleanedIsbn = cleanIsbn(rawIsbn)
   const isbn = cleanedIsbn && isValidIsbn(cleanedIsbn) ? cleanedIsbn : rawIsbn
 
-  const title = asStringField(book.title).trim() || 'Untitled book'
-  const author = asStringField(book.author).trim() || 'Unknown author'
+  const title = asStringField(book.title).trim() || FALLBACK_BOOK_TITLE
+  const author = asStringField(book.author).trim() || FALLBACK_BOOK_AUTHOR
   const rawId = asStringField(book.id, MAX_ID_LENGTH).trim()
   const id = rawId || makeId(title, index)
 
@@ -784,6 +786,14 @@ const STATUS_RANK = {
   Finished: 2,
 }
 
+function identityTitle(title) {
+  return String(title ?? '').trim() || FALLBACK_BOOK_TITLE
+}
+
+function identityAuthor(author) {
+  return String(author ?? '').trim() || FALLBACK_BOOK_AUTHOR
+}
+
 function normalizeMatchKey(title, author) {
   const clean = (value) => String(value || '')
     .toLowerCase()
@@ -791,7 +801,42 @@ function normalizeMatchKey(title, author) {
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-z0-9]+/g, ' ')
     .trim()
-  return `${clean(title)}|${clean(author)}`
+  // Match stored books: blank title/author become Untitled / Unknown author.
+  return `${clean(identityTitle(title))}|${clean(identityAuthor(author))}`
+}
+
+/**
+ * Same-edition match for add-book warnings (ISBN, then id, then title+author).
+ * Returns the first library book that matches, or null.
+ */
+export function findDuplicateBook(library, draft) {
+  const books = Array.isArray(library) ? library : []
+  if (!draft || typeof draft !== 'object' || !books.length) return null
+
+  const draftIsbn = cleanIsbn(draft.isbn)
+  if (draftIsbn) {
+    const match = books.find((book) => cleanIsbn(book.isbn) === draftIsbn)
+    if (match) return match
+  }
+
+  const draftId = typeof draft.id === 'string' ? draft.id.trim() : ''
+  if (draftId) {
+    const match = books.find((book) => book.id === draftId)
+    if (match) return match
+  }
+
+  const draftKey = normalizeMatchKey(draft.title, draft.author)
+  return books.find((book) => normalizeMatchKey(book.title, book.author) === draftKey) || null
+}
+
+/**
+ * Add-sheet submit: edit updates in place; add warns on a match.
+ */
+export function resolveBookSubmit(library, draft, options = {}) {
+  if (options.editing) return { action: 'update' }
+  const existing = findDuplicateBook(library, draft)
+  if (existing) return { action: 'warn', existing }
+  return { action: 'add' }
 }
 
 function earlierIso(a, b) {

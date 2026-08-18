@@ -12,6 +12,7 @@ import {
   computeGoalProgress,
   computeLibraryStats,
   computeYearInReview,
+  createBook,
   createDefaultShelf,
   createLibrary,
   createLibraryState,
@@ -20,6 +21,8 @@ import {
   deleteEmptyShelf,
   dismissLibraryBackupReminder,
   ensureLibraryCapacity,
+  findDuplicateBook,
+  resolveBookSubmit,
   loadLibrary,
   loadLibraryState,
   loadReadingGoals,
@@ -897,5 +900,71 @@ describe('room presets', () => {
     expect(clamped.adjusted).toBe(true)
     expect(Math.abs(clamped.shelves[0].x)).toBeLessThan(ROOM_LAYOUT_BOUND)
     expect(Math.abs(clamped.shelves[0].z)).toBeLessThan(ROOM_LAYOUT_BOUND)
+  })
+})
+
+describe('findDuplicateBook', () => {
+  const library = [
+    {
+      id: 'dune',
+      title: 'Dune',
+      author: 'Frank Herbert',
+      isbn: '9780441172719',
+    },
+    {
+      id: 'gatsby',
+      title: 'The Great Gatsby',
+      author: 'F. Scott Fitzgerald',
+      isbn: '',
+    },
+  ]
+
+  it('matches by ISBN', () => {
+    expect(findDuplicateBook(library, {
+      title: 'Something Else',
+      author: 'Another Author',
+      isbn: '978-0-441-17271-9',
+    })).toEqual(expect.objectContaining({ id: 'dune' }))
+  })
+
+  it('matches by normalized title and author', () => {
+    expect(findDuplicateBook(library, {
+      title: 'the great gatsby',
+      author: 'F Scott Fitzgerald',
+    })).toEqual(expect.objectContaining({ id: 'gatsby' }))
+  })
+
+  it('returns null when there is no match', () => {
+    expect(findDuplicateBook(library, {
+      title: 'Neuromancer',
+      author: 'William Gibson',
+      isbn: '9780441569595',
+    })).toBeNull()
+  })
+
+  it('matches two adds with an empty author as Unknown author', () => {
+    const first = createBook({ title: 'Nameless Volume', author: '' }, 0)
+    expect(first.author).toBe('Unknown author')
+    expect(findDuplicateBook([first], {
+      title: 'Nameless Volume',
+      author: '',
+    })).toEqual(expect.objectContaining({ id: first.id, author: 'Unknown author' }))
+    expect(findDuplicateBook([first], {
+      title: 'Nameless Volume',
+      author: '   ',
+    })).toEqual(expect.objectContaining({ id: first.id }))
+    expect(findDuplicateBook([first], {
+      title: 'Nameless Volume',
+      author: 'Unknown author',
+    })).toEqual(expect.objectContaining({ id: first.id }))
+  })
+
+  it('does not add a second copy when edit submit changes identity fields', () => {
+    const book = createBook({ title: 'The Great Gatsby', author: 'F. Scott Fitzgerald' }, 0)
+    const library = [book]
+    const draft = { title: 'The Great Gatsby (annotated)', author: 'F. Scott Fitzgerald' }
+    expect(findDuplicateBook(library, draft)).toBeNull()
+    expect(resolveBookSubmit(library, draft, { editing: true })).toEqual({ action: 'update' })
+    expect(resolveBookSubmit(library, draft)).toEqual({ action: 'add' })
   })
 })

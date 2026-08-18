@@ -4,6 +4,7 @@ import {
   computeLibraryStats,
   computeYearInReview,
   downloadLibraryExport,
+  findDuplicateBook,
   LIBRARY_SORT_OPTIONS,
   loadReadingGoals,
   lookupBookByIsbn,
@@ -179,6 +180,7 @@ function LibraryPanel({
   const [sortBy, setSortBy] = useState('shelf')
   const [draft, setDraft] = useState({ title: '', author: '', isbn: '', pageCount: '', coverUrl: '', shelfId: '' })
   const [lookupError, setLookupError] = useState('')
+  const [duplicate, setDuplicate] = useState(null)
   const [lookingUp, setLookingUp] = useState(false)
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [activeSuggestion, setActiveSuggestion] = useState(0)
@@ -384,7 +386,28 @@ function LibraryPanel({
     if (transferTimer.current !== null) window.clearTimeout(transferTimer.current)
   }, [])
 
-  const changeDraft = (field, value) => setDraft((current) => ({ ...current, [field]: value }))
+  const changeDraft = (field, value) => {
+    setDraft((current) => ({ ...current, [field]: value }))
+    if (field === 'title' || field === 'author' || field === 'isbn') setDuplicate(null)
+  }
+
+  const emptyDraft = () => ({ title: '', author: '', isbn: '', pageCount: '', coverUrl: '', shelfId: '' })
+
+  const draftPayload = () => ({
+    ...draft,
+    pageCount: Number(draft.pageCount) || 0,
+    shelfId: draft.shelfId || selectedShelfId || shelves[0]?.id,
+  })
+
+  const finishAdd = (payload) => {
+    const added = onAddBook(payload)
+    if (added === false) return false
+    setDraft(emptyDraft())
+    setLookupError('')
+    setDuplicate(null)
+    setAdding(false)
+    return true
+  }
 
   const exportLibrary = () => {
     clearTransferFeedback()
@@ -488,6 +511,7 @@ function LibraryPanel({
       author: book.author,
       coverUrl: book.coverUrl,
     }))
+    setDuplicate(null)
     setShowSuggestions(false)
     setSuggestionError('')
     setActiveSuggestion(0)
@@ -535,6 +559,7 @@ function LibraryPanel({
       const result = await lookupBookByIsbn(draft.isbn)
       if (requestId !== isbnRequestId.current) return
       setDraft((current) => ({ ...current, ...result }))
+      setDuplicate(null)
     } catch (error) {
       if (requestId !== isbnRequestId.current) return
       setLookupError(error instanceof Error ? error.message : 'Could not look up that ISBN.')
@@ -549,14 +574,30 @@ function LibraryPanel({
       setLookupError('Add a title before saving the book.')
       return
     }
-    const added = onAddBook({
-      ...draft,
-      pageCount: Number(draft.pageCount) || 0,
-      shelfId: draft.shelfId || selectedShelfId || shelves[0]?.id,
-    })
-    if (added === false) return
-    setDraft({ title: '', author: '', isbn: '', pageCount: '', coverUrl: '', shelfId: '' })
+    const payload = draftPayload()
+    const existing = findDuplicateBook(library, payload)
+    if (existing) {
+      setDuplicate(existing)
+      setLookupError('')
+      return
+    }
+    finishAdd(payload)
+  }
+
+  const addAnyway = () => {
+    if (!draft.title.trim()) {
+      setLookupError('Add a title before saving the book.')
+      return
+    }
+    finishAdd(draftPayload())
+  }
+
+  const openExisting = () => {
+    if (!duplicate) return
+    onSelectBook?.(duplicate.id)
+    setDraft(emptyDraft())
     setLookupError('')
+    setDuplicate(null)
     setAdding(false)
   }
 
@@ -1031,7 +1072,15 @@ function LibraryPanel({
             </button>
           )}
         </div>
-        <button type="button" onClick={() => setAdding((value) => !value)} style={actionButton(true)}>
+        <button
+          type="button"
+          onClick={() => {
+            setAdding((value) => !value)
+            setDuplicate(null)
+            setLookupError('')
+          }}
+          style={actionButton(true)}
+        >
           {adding ? 'Cancel' : '+ Add book'}
         </button>
       </div>
@@ -1229,6 +1278,36 @@ function LibraryPanel({
               ))}
             </select>
             {lookupError && <p role="alert" style={{ margin: 0, color: '#ffb4b4', fontSize: 12 }}>{lookupError}</p>}
+            {duplicate && (
+              <div
+                role="alert"
+                style={{
+                  display: 'grid',
+                  gap: 8,
+                  padding: '8px 10px',
+                  borderRadius: 9,
+                  color: '#ffe7b4',
+                  background: 'rgba(201, 154, 60, 0.14)',
+                  border: '1px solid rgba(250, 204, 21, 0.28)',
+                  fontSize: 12,
+                  lineHeight: 1.35,
+                }}
+              >
+                <p style={{ margin: 0 }}>
+                  This book is already in your library
+                  {duplicate.title ? `: “${duplicate.title}”` : ''}
+                  {duplicate.author ? ` by ${duplicate.author}` : ''}.
+                </p>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  <button type="button" onClick={openExisting} style={actionButton(true)}>
+                    Open existing
+                  </button>
+                  <button type="button" onClick={addAnyway} style={actionButton()}>
+                    Add anyway
+                  </button>
+                </div>
+              </div>
+            )}
             <button type="submit" style={actionButton(true)}>Add to library</button>
           </div>
         </form>
