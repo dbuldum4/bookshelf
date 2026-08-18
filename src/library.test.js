@@ -1,11 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  loadGalaxyMode,
+  loadGraphicsQuality,
+  loadReducedMotionPreference,
+  saveGalaxyMode,
+  saveGraphicsQuality,
+  saveReducedMotionPreference,
+} from './graphicsQuality'
+import {
   addEmptyShelf,
+  applyLibraryImportSettings,
   applyRoomPreset,
   applyShelfTransform,
+  BACKUP_STORAGE_KEY,
   booksFitOnShelf,
   booksOnShelf,
   bookWorldFocusPosition,
+  buildLibraryExport,
   buildShelfBooks,
   buildShelfCaseLayout,
   clampShelvesToRoom,
@@ -19,10 +30,14 @@ import {
   DEFAULT_SHELF_ID,
   deleteEmptyShelf,
   dismissLibraryBackupReminder,
+  downloadLibraryExport,
   ensureLibraryCapacity,
+  LIBRARY_EXPORT_FORMAT,
+  LIBRARY_EXPORT_VERSION,
   loadLibrary,
   loadLibraryState,
   loadReadingGoals,
+  loadReadingGoalsMap,
   markLibraryBackupDone,
   normalizeReadingGoals,
   mergeBookRecords,
@@ -48,6 +63,7 @@ import {
   tryReorderBookOnShelf,
   tryReorderBookToIndex,
 } from './library'
+import { loadViewMode, saveViewMode } from './viewMode'
 
 function makeStorage(initial = {}) {
   const values = new Map(Object.entries(initial))
@@ -796,6 +812,195 @@ describe('merge import', () => {
     expect(book.tags.length).toBeLessThanOrEqual(40)
     expect(book.quotes.length).toBeLessThanOrEqual(50)
     expect(book.notes.length).toBeLessThanOrEqual(20000)
+  })
+})
+
+describe('library export v3', () => {
+  let storage
+
+  const sampleBook = {
+    id: 'dune',
+    title: 'Dune',
+    author: 'Frank Herbert',
+    shelfId: DEFAULT_SHELF_ID,
+  }
+
+  function stubWindow(extra = {}) {
+    vi.stubGlobal('window', {
+      localStorage: storage,
+      matchMedia: () => ({ matches: false }),
+      setTimeout: vi.fn((fn) => fn()),
+      ...extra,
+    })
+  }
+
+  beforeEach(() => {
+    storage = makeStorage()
+    stubWindow()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('round-trips goals and preferences in a v3 export', () => {
+    expect(LIBRARY_EXPORT_VERSION).toBe(3)
+    expect(saveReadingGoals(2026, { books: 24, pages: 8000 })).toBe(true)
+    expect(saveReadingGoals(2025, { books: 12, pages: 0 })).toBe(true)
+    expect(saveGalaxyMode('pixelated')).toBe(true)
+    expect(saveGraphicsQuality('high')).toBe(true)
+    expect(saveReducedMotionPreference(true)).toBe(true)
+    expect(saveViewMode('normal')).toBe(true)
+
+    const exported = buildLibraryExport({
+      books: [sampleBook],
+      shelves: [createDefaultShelf()],
+    })
+
+    expect(exported.version).toBe(3)
+    expect(exported.format).toBe(LIBRARY_EXPORT_FORMAT)
+    expect(exported).toHaveProperty('goals')
+    expect(exported).toHaveProperty('preferences')
+    expect(exported.goals).toEqual({
+      2025: { books: 12, pages: 0 },
+      2026: { books: 24, pages: 8000 },
+    })
+    expect(exported.preferences).toEqual({
+      galaxyMode: 'pixelated',
+      graphicsQuality: 'high',
+      reducedMotion: true,
+      viewMode: 'normal',
+    })
+
+    storage.values.clear()
+    expect(saveGalaxyMode('realistic')).toBe(true)
+    expect(saveGraphicsQuality('low')).toBe(true)
+    expect(saveReducedMotionPreference(false)).toBe(true)
+    expect(saveViewMode('3d')).toBe(true)
+    expect(saveReadingGoals(2024, { books: 5, pages: 400 })).toBe(true)
+
+    const parsed = parseLibraryImport(JSON.stringify(exported))
+    expect(parsed.version).toBe(3)
+    expect(parsed.books[0]).toEqual(expect.objectContaining({ title: 'Dune' }))
+    expect(parsed.goals).toEqual(exported.goals)
+    expect(parsed.preferences).toEqual(exported.preferences)
+
+    applyLibraryImportSettings(parsed, 'replace')
+    expect(loadReadingGoalsMap()).toEqual(exported.goals)
+    expect(loadReadingGoals(2024)).toEqual({ books: 0, pages: 0 })
+    expect(loadGalaxyMode()).toBe('pixelated')
+    expect(loadGraphicsQuality()).toBe('high')
+    expect(loadReducedMotionPreference()).toBe(true)
+    expect(loadViewMode()).toBe('normal')
+  })
+
+  it('still imports v2 files without goals or preferences', () => {
+    expect(saveReadingGoals(2026, { books: 10, pages: 1000 })).toBe(true)
+    expect(saveGalaxyMode('realistic')).toBe(true)
+    expect(saveGraphicsQuality('medium')).toBe(true)
+    expect(saveReducedMotionPreference(false)).toBe(true)
+    expect(saveViewMode('3d')).toBe(true)
+
+    const payload = {
+      format: LIBRARY_EXPORT_FORMAT,
+      version: 2,
+      books: [sampleBook],
+      shelves: [
+        { id: DEFAULT_SHELF_ID, name: 'Library', x: 0, z: 0, yaw: 0, width: 7.6, rows: 4 },
+      ],
+    }
+
+    const parsed = parseLibraryImport(JSON.stringify(payload))
+    expect(parsed.version).toBe(2)
+    expect(parsed.books).toHaveLength(1)
+    expect(parsed.shelves[0].id).toBe(DEFAULT_SHELF_ID)
+    expect(parsed.goals).toBeNull()
+    expect(parsed.preferences).toBeNull()
+
+    applyLibraryImportSettings(parsed, 'replace')
+    expect(loadReadingGoals(2026)).toEqual({ books: 10, pages: 1000 })
+    expect(loadGalaxyMode()).toBe('realistic')
+    expect(loadGraphicsQuality()).toBe('medium')
+    expect(loadReducedMotionPreference()).toBe(false)
+    expect(loadViewMode()).toBe('3d')
+  })
+
+  it('merge does not clobber preferences and only unions goal years', () => {
+    expect(saveReadingGoals(2026, { books: 10, pages: 1000 })).toBe(true)
+    expect(saveReadingGoals(2024, { books: 5, pages: 500 })).toBe(true)
+    expect(saveGalaxyMode('realistic')).toBe(true)
+    expect(saveGraphicsQuality('low')).toBe(true)
+    expect(saveReducedMotionPreference(false)).toBe(true)
+    expect(saveViewMode('3d')).toBe(true)
+
+    const payload = {
+      format: LIBRARY_EXPORT_FORMAT,
+      version: 3,
+      books: [sampleBook],
+      shelves: [createDefaultShelf()],
+      goals: {
+        2026: { books: 24, pages: 8000 },
+        2025: { books: 12, pages: 0 },
+      },
+      preferences: {
+        galaxyMode: 'pixelated',
+        graphicsQuality: 'high',
+        reducedMotion: true,
+        viewMode: 'normal',
+      },
+    }
+
+    const parsed = parseLibraryImport(JSON.stringify(payload))
+    applyLibraryImportSettings(parsed, 'merge')
+
+    expect(loadGalaxyMode()).toBe('realistic')
+    expect(loadGraphicsQuality()).toBe('low')
+    expect(loadReducedMotionPreference()).toBe(false)
+    expect(loadViewMode()).toBe('3d')
+    expect(loadReadingGoals(2026)).toEqual({ books: 24, pages: 8000 })
+    expect(loadReadingGoals(2025)).toEqual({ books: 12, pages: 0 })
+    expect(loadReadingGoals(2024)).toEqual({ books: 5, pages: 500 })
+  })
+
+  it('always emits goals and preferences keys and marks backup done on download', () => {
+    const click = vi.fn()
+    const remove = vi.fn()
+    const appendChild = vi.fn()
+    const createObjectURL = vi.fn(() => 'blob:library')
+    const revokeObjectURL = vi.fn()
+    let blobText = ''
+    class MockBlob {
+      constructor(parts) {
+        blobText = String(parts?.[0] ?? '')
+      }
+    }
+
+    vi.stubGlobal('document', {
+      createElement: () => ({ href: '', download: '', rel: '', click, remove }),
+      body: { appendChild },
+    })
+    vi.stubGlobal('Blob', MockBlob)
+    vi.stubGlobal('URL', { createObjectURL, revokeObjectURL })
+
+    const emptyExport = buildLibraryExport({
+      books: [sampleBook],
+      shelves: [createDefaultShelf()],
+    })
+    expect(emptyExport.goals).toEqual({})
+    expect(emptyExport.preferences).toEqual({
+      galaxyMode: 'realistic',
+      graphicsQuality: 'medium',
+      reducedMotion: null,
+      viewMode: '3d',
+    })
+
+    downloadLibraryExport({ books: [sampleBook], shelves: [createDefaultShelf()] })
+    expect(click).toHaveBeenCalled()
+    expect(storage.getItem(BACKUP_STORAGE_KEY)).toBeTruthy()
+    const downloaded = JSON.parse(blobText)
+    expect(downloaded.version).toBe(3)
+    expect(downloaded).toHaveProperty('goals')
+    expect(downloaded).toHaveProperty('preferences')
   })
 })
 

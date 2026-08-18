@@ -36,7 +36,12 @@ function ImportExportView({
       }
       const text = await file.text()
       const parsed = parseLibraryFile(text, file.name)
-      const payload = { books: parsed.books, shelves: parsed.shelves }
+      const payload = {
+        books: parsed.books,
+        shelves: parsed.shelves,
+        goals: parsed.goals,
+        preferences: parsed.preferences,
+      }
 
       if (!library.length) {
         onReplaceLibrary(payload)

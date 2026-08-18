@@ -1,3 +1,15 @@
+import {
+  isGalaxyMode,
+  isGraphicsQuality,
+  loadGalaxyMode,
+  loadGraphicsQuality,
+  loadReducedMotionPreference,
+  saveGalaxyMode,
+  saveGraphicsQuality,
+  saveReducedMotionPreference,
+} from './graphicsQuality'
+import { loadViewMode, saveViewMode, VIEW_MODES } from './viewMode'
+
 const STORAGE_KEY = 'bookshelf-library-v3'
 const LEGACY_STORAGE_KEY_V2 = 'bookshelf-library-v2'
 const LEGACY_STORAGE_KEY_V1 = 'bookshelf-library-v1'
@@ -536,7 +548,7 @@ export function saveLibrary(libraryOrState) {
 }
 
 export const LIBRARY_EXPORT_FORMAT = 'bookshelf-library'
-export const LIBRARY_EXPORT_VERSION = 2
+export const LIBRARY_EXPORT_VERSION = 3
 
 const BOOK_EXPORT_FIELDS = [
   'id',
@@ -572,7 +584,75 @@ function pickShelfFields(shelf) {
   return next
 }
 
-/** Build a portable, versioned snapshot of the full library (books + shelves). */
+function loadExportPreferences() {
+  let viewMode = '3d'
+  try {
+    viewMode = loadViewMode()
+  } catch {
+    // Tests and private windows may stub `window` without matchMedia.
+    viewMode = '3d'
+  }
+  return {
+    galaxyMode: loadGalaxyMode(),
+    graphicsQuality: loadGraphicsQuality(),
+    reducedMotion: loadReducedMotionPreference(),
+    viewMode,
+  }
+}
+
+function parseImportedPreferences(value) {
+  if (value == null || typeof value !== 'object' || Array.isArray(value)) return null
+  const reducedMotion = value.reducedMotion === true
+    ? true
+    : value.reducedMotion === false
+      ? false
+      : value.reducedMotion === null
+        ? null
+        : undefined
+  return {
+    galaxyMode: isGalaxyMode(value.galaxyMode) ? value.galaxyMode : undefined,
+    graphicsQuality: isGraphicsQuality(value.graphicsQuality) ? value.graphicsQuality : undefined,
+    reducedMotion,
+    viewMode: VIEW_MODES.includes(value.viewMode) ? value.viewMode : undefined,
+  }
+}
+
+/** Persist imported display settings. Null reducedMotion clears the user override. */
+export function applyExportPreferences(preferences) {
+  if (!preferences || typeof preferences !== 'object') return false
+  if (isGalaxyMode(preferences.galaxyMode)) saveGalaxyMode(preferences.galaxyMode)
+  if (isGraphicsQuality(preferences.graphicsQuality)) saveGraphicsQuality(preferences.graphicsQuality)
+  if (VIEW_MODES.includes(preferences.viewMode)) saveViewMode(preferences.viewMode)
+  if (
+    preferences.reducedMotion === true
+    || preferences.reducedMotion === false
+    || preferences.reducedMotion === null
+  ) {
+    saveReducedMotionPreference(preferences.reducedMotion)
+  }
+  return true
+}
+
+/**
+ * Apply extras from a parsed import.
+ * Replace restores the full goals map and writes preferences.
+ * Merge unions goal years only and leaves preferences alone.
+ */
+export function applyLibraryImportSettings(parsed, mode) {
+  if (!parsed || typeof parsed !== 'object') return false
+  if (mode === 'replace') {
+    if (parsed.goals) replaceReadingGoalsMap(parsed.goals)
+    if (parsed.preferences) applyExportPreferences(parsed.preferences)
+    return true
+  }
+  if (mode === 'merge' && parsed.goals) {
+    mergeReadingGoalsMap(parsed.goals)
+    return true
+  }
+  return false
+}
+
+/** Build a portable, versioned snapshot of the library, goals, and settings. */
 export function buildLibraryExport(libraryOrState) {
   const state = Array.isArray(libraryOrState)
     ? normalizeLibraryState({ books: libraryOrState, shelves: [createDefaultShelf()] })
@@ -583,6 +663,8 @@ export function buildLibraryExport(libraryOrState) {
     exportedAt: new Date().toISOString(),
     books: state.books.map((book, index) => pickBookFields(normalizeBook(book, index))),
     shelves: state.shelves.map((shelf, index) => pickShelfFields(normalizeShelf(shelf, index))),
+    goals: loadReadingGoalsMap(),
+    preferences: loadExportPreferences(),
   }
 }
 
@@ -597,6 +679,8 @@ function extractImportedState(data) {
       shelves: null,
       format: null,
       version: null,
+      goals: null,
+      preferences: null,
     }
   }
 
@@ -627,12 +711,18 @@ function extractImportedState(data) {
     shelves: Array.isArray(data.shelves) ? data.shelves : null,
     format: data.format || null,
     version: data.version ?? null,
+    goals: Object.prototype.hasOwnProperty.call(data, 'goals')
+      ? normalizeReadingGoalsMap(data.goals)
+      : null,
+    preferences: Object.prototype.hasOwnProperty.call(data, 'preferences')
+      ? parseImportedPreferences(data.preferences)
+      : null,
   }
 }
 
 /**
  * Parse and validate a library JSON string.
- * Accepts versioned export (v1 books-only or v2 books+shelves) or a bare books array.
+ * Accepts v1 (books), v2 (books+shelves), v3 (adds goals+preferences), or a bare books array.
  */
 export function parseLibraryImport(text) {
   if (typeof text !== 'string' || !text.trim()) {
@@ -689,6 +779,8 @@ export function parseLibraryImport(text) {
     count: state.books.length,
     format: extracted.format,
     version: extracted.version,
+    goals: extracted.goals,
+    preferences: extracted.preferences,
   }
 }
 
@@ -1325,6 +1417,8 @@ export function parseLibraryCsv(text) {
     count: books.length,
     format: 'csv',
     version: null,
+    goals: null,
+    preferences: null,
   }
 }
 
@@ -1613,34 +1707,92 @@ export function normalizeReadingGoals(value) {
   return { books, pages }
 }
 
+function readGoalsStorage() {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = window.localStorage.getItem(READING_GOALS_STORAGE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Normalize a per-year goals map. Legacy flat { books, pages } becomes the current year.
+ * @returns {Record<string, { books: number, pages: number }>}
+ */
+export function normalizeReadingGoalsMap(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  const keys = Object.keys(value)
+  const hasYearKeys = keys.some((key) => /^\d{4}$/.test(key))
+  if (!hasYearKeys && ('books' in value || 'pages' in value)) {
+    return { [String(new Date().getFullYear())]: normalizeReadingGoals(value) }
+  }
+
+  const map = {}
+  for (const key of keys) {
+    if (!/^\d{4}$/.test(key)) continue
+    const year = Number(key)
+    if (year < 1970 || year > 2100) continue
+    const entry = value[key]
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue
+    map[key] = normalizeReadingGoals(entry)
+  }
+  return map
+}
+
+/** Load the full per-year reading goals map from localStorage. */
+export function loadReadingGoalsMap() {
+  const parsed = readGoalsStorage()
+  if (!parsed) return {}
+  return normalizeReadingGoalsMap(parsed)
+}
+
+/** Replace the stored goals map (used by replace import). */
+export function replaceReadingGoalsMap(map) {
+  if (typeof window === 'undefined') return false
+  try {
+    window.localStorage.setItem(
+      READING_GOALS_STORAGE_KEY,
+      JSON.stringify(normalizeReadingGoalsMap(map)),
+    )
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Merge imported years into the stored map without dropping other local years. */
+export function mergeReadingGoalsMap(map) {
+  const incoming = normalizeReadingGoalsMap(map)
+  let ok = true
+  for (const [year, goals] of Object.entries(incoming)) {
+    if (!saveReadingGoals(Number(year), goals)) ok = false
+  }
+  return ok
+}
+
 /**
  * Load yearly reading goals from localStorage.
  * @param {number} [year]
  * @returns {{ books: number, pages: number }}
  */
 export function loadReadingGoals(year = new Date().getFullYear()) {
-  if (typeof window === 'undefined') return normalizeReadingGoals(null)
-  try {
-    const raw = window.localStorage.getItem(READING_GOALS_STORAGE_KEY)
-    if (!raw) return normalizeReadingGoals(null)
-    const parsed = JSON.parse(raw)
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      return normalizeReadingGoals(null)
-    }
+  const parsed = readGoalsStorage()
+  if (!parsed) return normalizeReadingGoals(null)
 
-    // Per-year map: { "2026": { books, pages }, ... }
-    const yearEntry = parsed[String(year)]
-    if (yearEntry && typeof yearEntry === 'object') {
-      return normalizeReadingGoals(yearEntry)
-    }
+  const yearEntry = parsed[String(year)]
+  if (yearEntry && typeof yearEntry === 'object') {
+    return normalizeReadingGoals(yearEntry)
+  }
 
-    // Legacy flat shape { books, pages } with no year keys.
-    const hasYearKeys = Object.keys(parsed).some((key) => /^\d{4}$/.test(key))
-    if (!hasYearKeys && ('books' in parsed || 'pages' in parsed)) {
-      return normalizeReadingGoals(parsed)
-    }
-  } catch {
-    // Quota errors, private mode, or corrupt JSON — treat as unset.
+  // Legacy flat shape { books, pages } with no year keys.
+  const hasYearKeys = Object.keys(parsed).some((key) => /^\d{4}$/.test(key))
+  if (!hasYearKeys && ('books' in parsed || 'pages' in parsed)) {
+    return normalizeReadingGoals(parsed)
   }
   return normalizeReadingGoals(null)
 }

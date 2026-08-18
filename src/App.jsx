@@ -18,6 +18,7 @@ import {
   saveReducedMotionPreference,
 } from './graphicsQuality'
 import {
+  applyLibraryImportSettings,
   applyRoomPreset,
   applyShelfTransform,
   assignBookToShelf,
@@ -440,6 +441,20 @@ export default function App() {
     setSelectedBookId(null)
   }
 
+  const syncPreferencesFromStorage = () => {
+    setGalaxyMode(loadGalaxyMode())
+    setGraphicsQuality(loadGraphicsQuality())
+    setViewMode(loadViewMode())
+    const motion = loadReducedMotionPreference()
+    if (motion == null) {
+      setReducedMotionUserOverride(false)
+      setReducedMotion(prefersReducedMotion())
+    } else {
+      setReducedMotionUserOverride(true)
+      setReducedMotion(motion)
+    }
+  }
+
   const replaceLibrary = (next) => {
     const books = Array.isArray(next?.books) ? next.books : Array.isArray(next) ? next : []
     const nextShelves = Array.isArray(next?.shelves) && next.shelves.length
@@ -451,6 +466,8 @@ export default function App() {
     setLibraryState({ books: fitted.books, shelves: fitted.shelves })
     setSelectedBookId(null)
     setSelectedShelfId(fitted.shelves[0]?.id || DEFAULT_SHELF_ID)
+    applyLibraryImportSettings(next, 'replace')
+    if (next?.preferences) syncPreferencesFromStorage()
     if (fitted.message) flashStatus(fitted.message)
   }
 
@@ -467,6 +484,7 @@ export default function App() {
         ? current
         : (result.shelves[0]?.id || DEFAULT_SHELF_ID)
     ))
+    applyLibraryImportSettings(next, 'merge')
     if (result.message) flashStatus(result.message)
     return result
   }

@@ -412,10 +412,19 @@ function LibraryPanel({
     showTransferFeedback('Import cancelled. Your library was not changed.')
   }
 
+  const syncGoalsFromStorage = () => {
+    const next = loadReadingGoals()
+    setGoals(next)
+    setGoalDraft(next)
+    setEditingGoals(false)
+    setGoalError('')
+  }
+
   const confirmMergeImport = () => {
     if (!pendingImport) return
     const { payload, count, fileName } = pendingImport
     const result = onMergeLibrary?.(payload)
+    syncGoalsFromStorage()
     setPendingImport(null)
     if (result && typeof result === 'object') {
       const { added = 0, updated = 0 } = result
@@ -438,6 +447,7 @@ function LibraryPanel({
     )
     if (!confirmed) return
     onReplaceLibrary(payload)
+    syncGoalsFromStorage()
     setPendingImport(null)
     showTransferFeedback(`Replaced library with ${count} book${count === 1 ? '' : 's'} from ${fileName}.`)
   }
@@ -459,11 +469,17 @@ function LibraryPanel({
       const parsed = parseLibraryFile(text, file.name)
       const { books, count, format } = parsed
       const kind = format === 'csv' ? 'CSV' : 'JSON'
-      const payload = { books, shelves: parsed.shelves }
+      const payload = {
+        books,
+        shelves: parsed.shelves,
+        goals: parsed.goals,
+        preferences: parsed.preferences,
+      }
 
       // Empty library: always load directly.
       if (!library.length) {
         onReplaceLibrary(payload)
+        syncGoalsFromStorage()
         showTransferFeedback(`Imported ${count} book${count === 1 ? '' : 's'} from ${file.name}.`)
         return
       }
