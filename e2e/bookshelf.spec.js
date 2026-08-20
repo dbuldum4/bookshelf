@@ -65,6 +65,26 @@ test('shows reading stats and sort controls in the library panel', async ({ page
   await expect(page.getByLabel('Sort library')).toHaveValue('title')
 })
 
+test('uses the selected shelf when adding a book in normal mode', async ({ page }) => {
+  await page.getByRole('button', { name: 'Normal mode' }).click()
+  await expect(page.getByRole('heading', { name: 'Bookshelf' })).toBeVisible()
+
+  await page.getByRole('button', { name: 'Shelves', exact: true }).click()
+  await page.getByRole('button', { name: 'Add shelf' }).click()
+  await page.getByRole('button', { name: 'Books', exact: true }).click()
+  await page.getByRole('button', { name: 'Add book' }).click()
+
+  await page.getByLabel('Title').fill('A book for Shelf 2')
+  await page.getByRole('button', { name: 'Add book', exact: true }).last().click()
+
+  const savedState = await page.evaluate(() => JSON.parse(
+    window.localStorage.getItem('bookshelf-library-v3') || '{}',
+  ))
+  const addedBook = savedState.books?.find((book) => book.title === 'A book for Shelf 2')
+  const shelf = savedState.shelves?.find((entry) => entry.name === 'Shelf 2')
+  expect(addedBook?.shelfId).toBe(shelf?.id)
+})
+
 test('sets reading goals and expands year in review', async ({ page }) => {
   await page.getByRole('button', { name: /goals/i }).click()
   await page.getByLabel('Books finished goal').fill('12')
@@ -100,7 +120,7 @@ test('keeps an add-book draft when the selected shelf is full', async ({ page })
   await page.getByRole('button', { name: '+ Add book' }).click()
   const title = page.getByLabel('Book title')
   await title.fill('Keep this draft')
-  await page.getByRole('button', { name: 'Add to library' }).click()
+  await page.getByRole('button', { name: 'Add to library' }).click({ force: true })
 
   await expect(page.getByText(/That shelf is full/)).toBeVisible()
   await expect(title).toHaveValue('Keep this draft')
