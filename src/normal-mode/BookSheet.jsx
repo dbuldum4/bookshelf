@@ -21,6 +21,7 @@ function today() {
 function BookSheet({
   book,
   shelves,
+  selectedShelfId,
   open,
   onOpenChange,
   onAddBook,
@@ -35,7 +36,7 @@ function BookSheet({
     isbn: '',
     pageCount: '',
     coverUrl: '',
-    shelfId: shelves[0]?.id || '',
+    shelfId: selectedShelfId || shelves[0]?.id || '',
     status: 'Want to Read',
     rating: 0,
     currentPage: '',
@@ -83,7 +84,7 @@ function BookSheet({
         isbn: '',
         pageCount: '',
         coverUrl: '',
-        shelfId: shelves[0]?.id || '',
+        shelfId: selectedShelfId || shelves[0]?.id || '',
         status: 'Want to Read',
         rating: 0,
         currentPage: '',
@@ -99,7 +100,7 @@ function BookSheet({
     setShowSuggestions(false)
     setSuggestionError('')
     setCoverFailed(false)
-  }, [book, open, shelves])
+  }, [book, open, selectedShelfId, shelves])
 
   useEffect(() => {
     if (isAdding && open) {
